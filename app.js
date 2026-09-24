@@ -1,6 +1,9 @@
 // --- HELPER FUNCTIONS ---
 const $ = id => document.getElementById(id);
-const toNum = v => isNaN(+v) ? 0 : +v;
+const toNum = ProductionCore.toNumber;
+const escapeHtml = value => String(value ?? '').replace(/[&<>'"]/g, char => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+}[char]));
 const uid = () => Math.random().toString(36).slice(2);
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
@@ -11,10 +14,8 @@ let master = [];
 let _rekapLogs = [];
 
 // TARGET CONTROL SETTINGS
-const STANDARD_SHIFT_HOURS = 8;
+const STANDARD_SHIFT_HOURS = ProductionCore.STANDARD_SHIFT_HOURS;
 const SHIFT_HOURS = STANDARD_SHIFT_HOURS; // kompatibilitas data lama
-const TARGET_TOLERANCE_PCT = 97; // Spare 3%: actual >= 97% dari target aktual dianggap masih aman.
-const TARGET_CRITICAL_PCT = 90;  // Di bawah 90% masuk merah besar.
 const TARGET_STATUS = {
     NO_TARGET: { label: 'Target belum aktif', cls: 'neutral', icon: '•' },
     TARGET_STANDARD_TERCAPAI: { label: 'Target Tercapai', cls: 'ok', icon: '•' },
@@ -39,12 +40,12 @@ function getProductStdCavity(prod) {
 }
 
 function getTargetShotHour(cycleTimeSec) {
-    return cycleTimeSec > 0 ? Math.round(3600 / cycleTimeSec) : 0;
+    return ProductionCore.targetShotPerHour(cycleTimeSec);
 }
 
 function getSelectedEffectiveHours() {
     const raw = toNum($('eEffectiveHours')?.value) || STANDARD_SHIFT_HOURS;
-    return Math.min(STANDARD_SHIFT_HOURS, Math.max(1, raw));
+    return ProductionCore.clampEffectiveHours(raw, STANDARD_SHIFT_HOURS);
 }
 
 function uniqueDashboardLogs(rows) {
@@ -59,16 +60,7 @@ function uniqueDashboardLogs(rows) {
 }
 
 function makeTargetStatus(okpcs, targetStandard, targetActual) {
-    if(!targetActual || targetActual <= 0) return 'NO_TARGET';
-    const safeStandard = targetStandard > 0 ? targetStandard : targetActual;
-    const achActual = targetActual > 0 ? (okpcs / targetActual) * 100 : 0;
-    const okAgainstStandard = okpcs >= (safeStandard * (TARGET_TOLERANCE_PCT / 100));
-    const okAgainstActual = okpcs >= (targetActual * (TARGET_TOLERANCE_PCT / 100));
-
-    if(okAgainstStandard) return 'TARGET_STANDARD_TERCAPAI';
-    if(okAgainstActual) return 'TERCAPAI_AKTUAL_LOSS_CAPACITY';
-    if(achActual >= TARGET_CRITICAL_PCT) return 'HAMPIR_TIDAK_TARGET';
-    return 'TIDAK_TARGET';
+    return ProductionCore.targetStatus(okpcs, targetStandard, targetActual);
 }
 
 function isTargetUnsafe(status) {
@@ -393,11 +385,11 @@ function renderTable() {
         const meta = statusMeta(tg.status);
         const tr = document.createElement('tr');
         tr.innerHTML = `
-            <td>${r.tanggal || '-'}</td>
-            <td>${r.shift || '-'}</td>
-            <td>${r.line || '-'}</td>
-            <td><b>${r.nama || '-'}</b><br><small>${r.kode || '-'}</small></td>
-            <td>${r.tipe || '-'}</td>
+            <td>${escapeHtml(r.tanggal || '-')}</td>
+            <td>${escapeHtml(r.shift || '-')}</td>
+            <td>${escapeHtml(r.line || '-')}</td>
+            <td><b>${escapeHtml(r.nama || '-')}</b><br><small>${escapeHtml(r.kode || '-')}</small></td>
+            <td>${escapeHtml(r.tipe || '-')}</td>
             <td class="right">${(+r.counter || 0).toLocaleString('id-ID')}</td>
             <td class="right">${(+tg.cavityActive || +r.cavity || 0)}</td>
             <td class="right">${tg.effectiveHours || STANDARD_SHIFT_HOURS} jam</td>
@@ -409,10 +401,12 @@ function renderTable() {
             <td class="right text-danger">${(+r.reject || 0).toLocaleString('id-ID')}</td>
             <td class="right"><b>${(+r.yieldpct || 0).toFixed(2)}%</b></td>
             <td style="text-align:center; white-space:nowrap;">
-                <button class="btn sm info" onclick="editLog('${r.id}')">✎</button> 
-                <button class="btn sm danger" onclick="deleteLog('${r.id}')">🗑</button>
+                <button class="btn sm info" data-action="edit">✎</button>
+                <button class="btn sm danger" data-action="delete">🗑</button>
             </td>
         `;
+        tr.querySelector('[data-action="edit"]').addEventListener('click', () => window.editLog(r.id));
+        tr.querySelector('[data-action="delete"]').addEventListener('click', () => window.deleteLog(r.id));
         t.appendChild(tr);
     });
 }
@@ -420,16 +414,16 @@ function renderTable() {
 function makeAlertItem(r, opts = {}) {
     const tg = extractLogTarget(r);
     const meta = statusMeta(tg.status);
-    const title = `${r.line || '-'} · Shift ${r.shift || '-'} · ${r.kode || ''}`;
-    const subtitle = r.nama || '-';
+    const title = escapeHtml(`${r.line || '-'} · Shift ${r.shift || '-'} · ${r.kode || ''}`);
+    const subtitle = escapeHtml(r.nama || '-');
     const reasonParts = [];
     if(r.under_target_reason) reasonParts.push(`Target: ${r.under_target_reason}`);
     if(r.planned_stop_reason) reasonParts.push(`Stop: ${r.planned_stop_reason}`);
     if(r.cavity_adjust_reason) reasonParts.push(`Cavity: ${r.cavity_adjust_reason}`);
     if(!reasonParts.length && r.catatan) reasonParts.push(r.catatan);
-    const reason = reasonParts.length ? reasonParts.join(' | ') : '-';
+    const reason = escapeHtml(reasonParts.length ? reasonParts.join(' | ') : '-');
     const capParts = [];
-    if(tg.effectiveHours < tg.standardShiftHours) capParts.push(`Jam ${tg.effectiveHours}/${tg.standardShiftHours} (${tg.plannedStopHours} jam stop${tg.stopReason ? ': ' + tg.stopReason : ''})`);
+    if(tg.effectiveHours < tg.standardShiftHours) capParts.push(`Jam ${tg.effectiveHours}/${tg.standardShiftHours} (${tg.plannedStopHours} jam stop${tg.stopReason ? ': ' + escapeHtml(tg.stopReason) : ''})`);
     if(tg.cavityActive < tg.cavityStd) capParts.push(`Cav ${tg.cavityStd} → ${tg.cavityActive}`);
     const lossLine = (opts.showLoss || capParts.length) ? `<div class="alert-item-note">Kapasitas turun: <b>${fmtInt(tg.capacityLossTotal || tg.loss || tg.timeLoss)}</b> pcs${capParts.length ? ' | ' + capParts.join(' | ') : ''}</div>` : '';
     return `
@@ -498,7 +492,7 @@ function renderLineFocus() {
     if (!content) return;
 
     if (!filtered.length) {
-        content.innerHTML = `<div class="lf-empty">Tidak ada data untuk line <b>${lineRaw.toUpperCase()}</b> di periode ini.</div>`;
+        content.innerHTML = `<div class="lf-empty">Tidak ada data untuk line <b>${escapeHtml(lineRaw.toUpperCase())}</b> di periode ini.</div>`;
         content.style.display = 'block';
         if (btnReset) btnReset.style.display = 'inline-flex';
         return;
@@ -564,8 +558,8 @@ function renderLineFocus() {
         <div class="lf-prod-card ${cardCls}">
             <div class="lf-prod-head">
                 <div>
-                    <div class="lf-prod-kode">${prod.kode || '-'}</div>
-                    <div class="lf-prod-nama">${prod.nama || '-'}</div>
+                    <div class="lf-prod-kode">${escapeHtml(prod.kode || '-')}</div>
+                    <div class="lf-prod-nama">${escapeHtml(prod.nama || '-')}</div>
                 </div>
                 <div class="lf-prod-ach" style="color:${achColor}">${avgAch !== null ? avgAch.toFixed(1)+'%' : '-'}</div>
             </div>
@@ -577,13 +571,13 @@ function renderLineFocus() {
                 ${capLoss > 0 ? `<div class="lf-pstat"><span class="lf-loss-val">${fmtInt(capLoss)}</span><small>Loss Cap</small></div>` : ''}
             </div>
             ${topRej.length ? `<div class="lf-reject-pills">${topRej.map(([k,v]) => `<span class="lf-reject-pill">${k.toUpperCase()} <b>${fmtInt(v)}</b></span>`).join('')}</div>` : ''}
-            ${issues.size  ? `<div class="lf-issues">${[...issues].slice(0,3).map(i=>`<div class="lf-issue-item">⚠ ${i}</div>`).join('')}</div>` : ''}
+            ${issues.size  ? `<div class="lf-issues">${[...issues].slice(0,3).map(i=>`<div class="lf-issue-item">⚠ ${escapeHtml(i)}</div>`).join('')}</div>` : ''}
         </div>`;
     }).join('');
 
     content.innerHTML = `
         <div class="lf-summary">
-            <div class="lf-summary-title">Line <b>${lineRaw.toUpperCase()}</b> · ${fromVal} s/d ${toVal} · ${prods.length} produk, ${totalShifts} shift</div>
+            <div class="lf-summary-title">Line <b>${escapeHtml(lineRaw.toUpperCase())}</b> · ${escapeHtml(fromVal)} s/d ${escapeHtml(toVal)} · ${prods.length} produk, ${totalShifts} shift</div>
             <div class="lf-summary-kpis">
                 <div class="lf-skpi"><span class="lf-skpi-v">${fmtInt(totalOk)}</span><span class="lf-skpi-l">Total OK</span></div>
                 <div class="lf-skpi danger"><span class="lf-skpi-v">${fmtInt(totalReject)}</span><span class="lf-skpi-l">Total Reject</span></div>
@@ -706,7 +700,22 @@ function autoFillProductByLine() {
 
 function setupCustomSearch() {
     const inp = $('eProduk'), lst = $('produkSuggestions');
-    inp.oninput = function() { const v = this.value.toLowerCase(); if(!v) { lst.style.display='none'; return; } const m = master.filter(p=>p.kode.toLowerCase().includes(v)||p.nama.toLowerCase().includes(v)); lst.innerHTML = m.length ? m.map(p=>{ const val = (p.kode + ' - ' + p.nama).replace(/\\/g,'\\\\').replace(/'/g,"\\'"); return `<div class="search-item" onclick="selectProduk('${val}')"><span>${p.kode}</span> - ${p.nama}</div>`; }).join('') : ''; lst.style.display = m.length?'block':'none'; };
+    inp.oninput = function() {
+        const v = this.value.toLowerCase();
+        lst.replaceChildren();
+        if(!v) { lst.style.display='none'; return; }
+        const matches = master.filter(p=>(p.kode || '').toLowerCase().includes(v)||(p.nama || '').toLowerCase().includes(v));
+        matches.forEach(p => {
+            const item = document.createElement('div');
+            item.className = 'search-item';
+            const code = document.createElement('span');
+            code.textContent = p.kode || '';
+            item.append(code, document.createTextNode(` - ${p.nama || ''}`));
+            item.addEventListener('click', () => window.selectProduk(`${p.kode || ''} - ${p.nama || ''}`));
+            lst.appendChild(item);
+        });
+        lst.style.display = matches.length ? 'block' : 'none';
+    };
     document.addEventListener('click', e=>{ if(e.target!==inp && e.target!==lst) lst.style.display='none'; });
 }
 
@@ -745,39 +754,25 @@ function compute(){
     const activeCav = Math.min(cav, stdCav || cav);
     
     let sblm=sum(['eSblm1','eSblm2','eSblm3','eSblm4','eSblm5','eSblm6']), ssdh=sum(['eSsdh1','eSsdh2','eSsdh3','eSsdh4','eSsdh5','eSsdh6']);
-    let sblm_pcs=sblm, ssdh_pcs=ssdh; if(tipe==='kg_sisa'){ const c=gram>0?(1000/gram):0; sblm_pcs=sblm*c; ssdh_pcs=ssdh*c; }
-    
     const qD=toNum($('eQtyDus').value), iD=toNum($('eIsiDus').value), qB=toNum($('eQtyBox').value), iB=toNum($('eIsiBox').value), qDp=toNum($('eQtyDusPlus').value), iDp=toNum($('eIsiDusPlus').value);
-    const packpcs=(qD*iD)+(qB*iB)+(qDp*iDp), okpcs=packpcs-sblm_pcs+ssdh_pcs, produksi=counter*activeCav, hasil=produksi+sblm_pcs-ssdh_pcs, rejectpcs=produksi-okpcs;
-    
-    const okkg=(okpcs*gram)/1000, rejectkg=(rejectpcs*gram)/1000, runnerkg=(counter*toNum($('eRunner').value))/1000;
+    const packpcs=(qD*iD)+(qB*iB)+(qDp*iDp);
     const jatah=toNum($('eJatah').value), stok=toNum($('eStok').value), balok=toNum($('eBalokan').value);
-    const sisaBahan=(jatah+stok)-(runnerkg+rejectkg+okkg+balok), yieldpct=hasil>0?(okpcs/hasil)*100:0, overpack=packpcs>hasil;
-    
-    const targetShotHour = getTargetShotHour(cycleTimeSec);
-    const targetHourStandard = targetShotHour * stdCav;
-    const targetHourActual = targetShotHour * activeCav;
-    const effectiveHours = getSelectedEffectiveHours();
-    const plannedStopHours = Math.max(0, STANDARD_SHIFT_HOURS - effectiveHours);
-    const targetStandardPcs = targetHourStandard * STANDARD_SHIFT_HOURS;
-    const targetActualPcs = targetHourActual * effectiveHours;
-    const achievementStandardPct = targetStandardPcs > 0 ? (okpcs / targetStandardPcs) * 100 : 0;
-    const achievementActualPct = targetActualPcs > 0 ? (okpcs / targetActualPcs) * 100 : 0;
-    const gapStandardPcs = targetStandardPcs > 0 ? okpcs - targetStandardPcs : 0;
-    const gapActualPcs = targetActualPcs > 0 ? okpcs - targetActualPcs : 0;
-    const timeLossPcs = Math.max(0, targetHourStandard * plannedStopHours);
-    const cavityLossPcs = Math.max(0, targetShotHour * Math.max(0, stdCav - activeCav) * effectiveHours);
-    const capacityLossTotalPcs = Math.max(0, targetStandardPcs - targetActualPcs);
-    const targetStatus = makeTargetStatus(okpcs, targetStandardPcs, targetActualPcs);
+    const calc = ProductionCore.calculateProduction({
+        gram, runnerGram: toNum($('eRunner').value), standardCavity: stdCav,
+        activeCavity: activeCav, counter, beforeRemainder: sblm, afterRemainder: ssdh,
+        packedPcs: packpcs, materialAllocation: jatah, materialStock: stok, blockKg: balok,
+        cycleTimeSec, effectiveHours: getSelectedEffectiveHours(),
+        standardShiftHours: STANDARD_SHIFT_HOURS, type: tipe
+    });
     
     const rIds=['rUneven','rMottled','rStartup','rShort','rFlow','rFlash','rCrack','rSpot','rScratch','rDirty'];
     const rValues = rIds.map(i=>toNum($(i).value));
     
     return { 
-        prod, tipe, gram, cav: activeCav, stdCav, cycleTimeSec, targetShotHour, targetHourStandard, targetHourActual,
-        standardShiftHours: STANDARD_SHIFT_HOURS, effectiveHours, plannedStopHours, targetStandardPcs, targetActualPcs, achievementStandardPct, achievementActualPct, gapStandardPcs, gapActualPcs, timeLossPcs, cavityLossPcs, capacityLossTotalPcs, targetStatus,
-        counter, sblm_pcs, ssdh_pcs, hasil, okpcs, okkg, 
-        rejectpcs, rejectkg, runnerkg, yieldpct, sisaBahan, overpack, packpcs, 
+        prod, tipe, gram, cav: calc.activeCavity, stdCav, cycleTimeSec, targetShotHour: calc.shotPerHour, targetHourStandard: calc.targetHourStandard, targetHourActual: calc.targetHourActual,
+        standardShiftHours: calc.standardHours, effectiveHours: calc.effectiveHours, plannedStopHours: calc.plannedStopHours, targetStandardPcs: calc.targetStandardPcs, targetActualPcs: calc.targetActualPcs, achievementStandardPct: calc.achievementStandardPct, achievementActualPct: calc.achievementActualPct, gapStandardPcs: calc.gapStandardPcs, gapActualPcs: calc.gapActualPcs, timeLossPcs: calc.timeLossPcs, cavityLossPcs: calc.cavityLossPcs, capacityLossTotalPcs: calc.capacityLossTotalPcs, targetStatus: calc.status,
+        counter, sblm_pcs: calc.beforePcs, ssdh_pcs: calc.afterPcs, hasil: calc.resultPcs, okpcs: calc.okPcs, okkg: calc.okKg,
+        rejectpcs: calc.rejectPcs, rejectkg: calc.rejectKg, runnerkg: calc.runnerKg, yieldpct: calc.yieldPct, sisaBahan: calc.remainingMaterialKg, overpack: calc.overpack, packpcs: calc.packedPcs,
         rtotal:sum(rIds), rmax:Math.max(...rValues), 
         details:{ sblm:[1,2,3,4,5,6].map(i=>toNum($('eSblm'+i).value)), ssdh:[1,2,3,4,5,6].map(i=>toNum($('eSsdh'+i).value)) } 
     };
@@ -1225,9 +1220,9 @@ function renderMaster(){
         const targetHour = getTargetShotHour(ct) * cav;
         return `
         <tr>
-            <td>${p.kode}</td>
-            <td>${p.nama}</td>
-            <td>${p.tipe}</td>
+            <td>${escapeHtml(p.kode)}</td>
+            <td>${escapeHtml(p.nama)}</td>
+            <td>${escapeHtml(p.tipe)}</td>
             <td class="right">${p.gram}</td>
             <td class="right">${p.runner}</td>
             <td class="right">${p.cavity}</td>
@@ -1235,11 +1230,13 @@ function renderMaster(){
             <td class="right">${targetHour ? fmtInt(targetHour) : '-'}</td>
             <td class="right">${p.per_dus}</td>
             <td style="text-align:center">
-                <button class="btn sm" onclick="editMaster('${p.id}')">✎</button> 
-                <button class="btn sm danger" onclick="deleteMaster('${p.id}')">🗑</button>
+                <button class="btn sm" data-action="edit" data-id="${escapeHtml(p.id)}">✎</button>
+                <button class="btn sm danger" data-action="delete" data-id="${escapeHtml(p.id)}">🗑</button>
             </td>
         </tr>`;
     }).join('');
+    t.querySelectorAll('[data-action="edit"]').forEach(button => button.addEventListener('click', () => window.editMaster(button.dataset.id)));
+    t.querySelectorAll('[data-action="delete"]').forEach(button => button.addEventListener('click', () => window.deleteMaster(button.dataset.id)));
 }
 
 // Fungsi Edit Master yang LEBIH AMAN (Pakai ID)
@@ -1302,7 +1299,7 @@ function renderRekapTable(m){
         if(lineDiff !== 0) return lineDiff;
         return a.n.localeCompare(b.n);
     });
-    $('tbodyRekap').innerHTML = sortedData.map(x => `<tr><td>${x.l}</td><td>${x.k}<br><small style="color:#fff">${x.n}</small></td><td class="right text-ok">${x.o.toLocaleString()}</td><td class="right text-danger">${x.r.toLocaleString()}</td><td class="right">${x.w.toFixed(2)}</td><td class="right"><b>${(x.c ? x.y / x.c : 0).toFixed(2)}%</b></td></tr>`).join('');
+    $('tbodyRekap').innerHTML = sortedData.map(x => `<tr><td>${escapeHtml(x.l)}</td><td>${escapeHtml(x.k)}<br><small style="color:#fff">${escapeHtml(x.n)}</small></td><td class="right text-ok">${x.o.toLocaleString()}</td><td class="right text-danger">${x.r.toLocaleString()}</td><td class="right">${x.w.toFixed(2)}</td><td class="right"><b>${(x.c ? x.y / x.c : 0).toFixed(2)}%</b></td></tr>`).join('');
 }
 
 function exportCSV(){

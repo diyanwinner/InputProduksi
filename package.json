@@ -1,0 +1,9 @@
+{
+  "name": "input-produksi",
+  "version": "3.5.0",
+  "private": true,
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check production-core.js && node --check app.js && node --check dashboard.js"
+  }
+}
