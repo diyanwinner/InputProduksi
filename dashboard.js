@@ -19,12 +19,12 @@ document.addEventListener('DOMContentLoaded', () => {
             start.setDate(end.getDate() - 7); // Default 7 hari terakhir
             document.getElementById('dFrom').value = start.toISOString().slice(0,10);
             document.getElementById('dTo').value = end.toISOString().slice(0,10);
-            document.getElementById('pDashboard').classList.add('open');
+            openWorkspace('monitoring');
             renderDashboard();
         };
     }
     
-    if(closeDash) closeDash.onclick = () => document.getElementById('pDashboard').classList.remove('open');
+    if(closeDash) closeDash.onclick = () => openWorkspace('home');
     if(loadDash) loadDash.onclick = renderDashboard;
 });
 

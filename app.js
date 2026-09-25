@@ -1,3 +1,30 @@
+// Static-index fallback. Keep formulas aligned with production-core.js.
+const ProductionCore = globalThis.ProductionCore || (() => {
+    const STANDARD_SHIFT_HOURS = 8;
+    const toNumber = value => Number.isFinite(Number(value)) ? Number(value) : 0;
+    const clampEffectiveHours = (value, standard = 8) => Math.min(standard, Math.max(1, toNumber(value) || standard));
+    const targetShotPerHour = cycle => toNumber(cycle) > 0 ? Math.round(3600 / toNumber(cycle)) : 0;
+    const targetStatus = (okValue, standardValue, actualValue) => {
+        const ok = toNumber(okValue), actual = toNumber(actualValue), standard = toNumber(standardValue) > 0 ? toNumber(standardValue) : actual;
+        if(actual <= 0) return 'NO_TARGET';
+        if(ok >= standard * .97) return 'TARGET_STANDARD_TERCAPAI';
+        if(ok >= actual * .97) return 'TERCAPAI_AKTUAL_LOSS_CAPACITY';
+        return (ok / actual) * 100 >= 90 ? 'HAMPIR_TIDAK_TARGET' : 'TIDAK_TARGET';
+    };
+    const calculateProduction = input => {
+        const standardHours=toNumber(input.standardShiftHours)||8, effectiveHours=clampEffectiveHours(input.effectiveHours,standardHours), gram=toNumber(input.gram);
+        const standardCavity=Math.max(1,toNumber(input.standardCavity)), activeCavity=Math.min(Math.max(1,toNumber(input.activeCavity)),standardCavity), counter=toNumber(input.counter);
+        const factor=input.type==='kg_sisa'&&gram>0?1000/gram:1, beforePcs=toNumber(input.beforeRemainder)*factor, afterPcs=toNumber(input.afterRemainder)*factor;
+        const packedPcs=toNumber(input.packedPcs), okPcs=packedPcs-beforePcs+afterPcs, productionPcs=counter*activeCavity, resultPcs=productionPcs+beforePcs-afterPcs, rejectPcs=productionPcs-okPcs;
+        const okKg=okPcs*gram/1000, rejectKg=rejectPcs*gram/1000, runnerKg=counter*toNumber(input.runnerGram)/1000;
+        const remainingMaterialKg=toNumber(input.materialAllocation)+toNumber(input.materialStock)-runnerKg-rejectKg-okKg-toNumber(input.blockKg), yieldPct=resultPcs>0?okPcs/resultPcs*100:0;
+        const shotPerHour=targetShotPerHour(input.cycleTimeSec), targetHourStandard=shotPerHour*standardCavity, targetHourActual=shotPerHour*activeCavity, plannedStopHours=Math.max(0,standardHours-effectiveHours);
+        const targetStandardPcs=targetHourStandard*standardHours, targetActualPcs=targetHourActual*effectiveHours;
+        return {standardHours,effectiveHours,plannedStopHours,standardCavity,activeCavity,beforePcs,afterPcs,packedPcs,productionPcs,resultPcs,okPcs,rejectPcs,okKg,rejectKg,runnerKg,remainingMaterialKg,yieldPct,shotPerHour,targetHourStandard,targetHourActual,targetStandardPcs,targetActualPcs,achievementStandardPct:targetStandardPcs>0?okPcs/targetStandardPcs*100:0,achievementActualPct:targetActualPcs>0?okPcs/targetActualPcs*100:0,gapStandardPcs:targetStandardPcs>0?okPcs-targetStandardPcs:0,gapActualPcs:targetActualPcs>0?okPcs-targetActualPcs:0,timeLossPcs:Math.max(0,targetHourStandard*plannedStopHours),cavityLossPcs:Math.max(0,shotPerHour*(standardCavity-activeCavity)*effectiveHours),capacityLossTotalPcs:Math.max(0,targetStandardPcs-targetActualPcs),status:targetStatus(okPcs,targetStandardPcs,targetActualPcs),overpack:packedPcs>resultPcs};
+    };
+    return {STANDARD_SHIFT_HOURS,toNumber,clampEffectiveHours,targetShotPerHour,targetStatus,calculateProduction};
+})();
+
 // --- HELPER FUNCTIONS ---
 const $ = id => document.getElementById(id);
 const toNum = ProductionCore.toNumber;
@@ -29,6 +56,57 @@ const fmtPct = n => ((+n || 0).toFixed(1)) + '%';
 const fmtSigned = n => { const x = Math.round(+n || 0); return (x > 0 ? '+' : '') + x.toLocaleString('id-ID'); };
 const normLine = v => (v || '').toString().trim().toUpperCase();
 const ymd = d => d.toISOString().slice(0, 10);
+
+const WORKSPACE_ROUTES = {
+    home: null,
+    input: 'mEntry',
+    monitoring: 'pDashboard',
+    reports: 'vLaporan',
+    recap: 'mRekap',
+    products: 'mMaster'
+};
+let adminWorkspaceGranted = false;
+
+function setActiveNavigation(route) {
+    const desktopMap = { input:'btnAdd', monitoring:'btnDashboard', reports:'btnOpenLog', recap:'btnRekap', products:'btnMaster' };
+    document.querySelectorAll('.side-nav-item').forEach(item => item.classList.remove('active'));
+    if($(desktopMap[route])) $(desktopMap[route]).classList.add('active');
+    document.querySelectorAll('[data-mobile-route]').forEach(item => item.classList.toggle('active', item.dataset.mobileRoute === route));
+}
+
+function openWorkspace(route = 'home', updateHash = true) {
+    let safeRoute = Object.hasOwn(WORKSPACE_ROUTES, route) ? route : 'home';
+    if(safeRoute === 'products' && !adminWorkspaceGranted) safeRoute = 'home';
+    document.querySelectorAll('.workspace-view.open').forEach(view => view.classList.remove('open'));
+    const targetId = WORKSPACE_ROUTES[safeRoute];
+    if(targetId && $(targetId)) {
+        $(targetId).classList.add('open');
+        $(targetId).scrollTop = 0;
+    }
+    document.body.dataset.route = safeRoute;
+    setActiveNavigation(safeRoute);
+    if(updateHash) history.pushState({ route: safeRoute }, '', safeRoute === 'home' ? '#/' : `#/${safeRoute}`);
+}
+
+function currentHashRoute() {
+    return location.hash.replace(/^#\/?/, '') || 'home';
+}
+
+function installWorkspaceShell() {
+    const main = document.querySelector('.erp-main');
+    if(main && !$('workspaceDate')) {
+        main.insertAdjacentHTML('afterbegin', '<header class="workspace-topbar"><div><span class="workspace-kicker">OPERATIONS WORKSPACE</span><h1>Production overview</h1></div><div class="workspace-topbar-actions"><span id="workspaceDate" class="workspace-date"></span><button id="btnOpenInputFromTop" class="btn primary sm" type="button">+ Laporan shift</button></div></header>');
+    }
+    const routes = { vLaporan:'reports', pDashboard:'monitoring', mRekap:'recap', mMaster:'products', mEntry:'input' };
+    Object.entries(routes).forEach(([id, route]) => {
+        if(!$(id)) return;
+        $(id).classList.add('workspace-view');
+        $(id).dataset.route = route;
+    });
+    if(!document.querySelector('.mobile-dock')) {
+        document.body.insertAdjacentHTML('beforeend', '<nav class="mobile-dock" aria-label="Navigasi cepat"><button type="button" data-mobile-route="home"><span>⌂</span><small>Beranda</small></button><button type="button" data-mobile-route="input"><span>＋</span><small>Input</small></button><button type="button" data-mobile-route="monitoring"><span>◫</span><small>Monitor</small></button><button type="button" data-mobile-route="reports"><span>≡</span><small>Data</small></button><button type="button" data-mobile-route="recap"><span>∑</span><small>Rekap</small></button></nav>');
+    }
+}
 
 function getProductCycleTime(prod) {
     if(!prod) return 0;
@@ -175,23 +253,25 @@ function extractLogTarget(r) {
 const ADMIN_PIN = "1234"; 
 
 document.addEventListener('DOMContentLoaded', () => {
+    installWorkspaceShell();
     // --- ACTIONS (MENU UTAMA) ---
-    $('btnAdd').onclick = () => { $('mEntry').classList.add('open'); resetEntryForm(); scrollEntryFormToTop('auto'); };
-    if($('btnOpenInputFromAlert')) $('btnOpenInputFromAlert').onclick = () => { $('mEntry').classList.add('open'); resetEntryForm(); scrollEntryFormToTop('auto'); };
-    if($('btnOpenInputFromTop')) $('btnOpenInputFromTop').onclick = () => { $('mEntry').classList.add('open'); resetEntryForm(); scrollEntryFormToTop('auto'); };
+    const openFreshEntry = () => { openWorkspace('input'); resetEntryForm(); scrollEntryFormToTop('auto'); };
+    $('btnAdd').onclick = openFreshEntry;
+    if($('btnOpenInputFromAlert')) $('btnOpenInputFromAlert').onclick = openFreshEntry;
+    if($('btnOpenInputFromTop')) $('btnOpenInputFromTop').onclick = openFreshEntry;
     $('btnRekap').onclick = fetchAndShowRekap;
-    $('btnOpenLog').onclick = () => { $('vLaporan').classList.add('open'); renderTable(); };
+    $('btnOpenLog').onclick = () => { openWorkspace('reports'); renderTable(); };
 
     // --- PROTECTED MENUS (BUTUH PIN) ---
     $('btnConfig').onclick = () => checkAdmin(() => $('mConfig').classList.add('open'));
-    $('btnMaster').onclick = () => checkAdmin(() => $('mMaster').classList.add('open'));
+    $('btnMaster').onclick = () => checkAdmin(() => { adminWorkspaceGranted = true; openWorkspace('products'); });
 
     // --- CLOSERS ---
-    $('vLaporanClose').onclick = () => $('vLaporan').classList.remove('open');
+    $('vLaporanClose').onclick = () => openWorkspace('home');
     $('mConfigClose').onclick = () => $('mConfig').classList.remove('open');
-    $('mEntryClose').onclick = () => $('mEntry').classList.remove('open');
-    $('mMasterClose').onclick = () => $('mMaster').classList.remove('open');
-    $('mRekapClose').onclick = () => $('mRekap').classList.remove('open');
+    $('mEntryClose').onclick = () => openWorkspace('home');
+    $('mMasterClose').onclick = () => openWorkspace('home');
+    $('mRekapClose').onclick = () => openWorkspace('home');
 
     // --- CORE ---
     $('btnSaveConfig').onclick = saveConfig;
@@ -242,6 +322,18 @@ document.addEventListener('DOMContentLoaded', () => {
     setupExcelNavigation();
     setupQuickInputMode();
     initLineFocus();
+
+    if($('workspaceDate')) $('workspaceDate').textContent = new Intl.DateTimeFormat('id-ID', { weekday:'long', day:'numeric', month:'long', year:'numeric' }).format(new Date());
+    document.querySelectorAll('[data-mobile-route]').forEach(button => button.addEventListener('click', () => {
+        const route = button.dataset.mobileRoute;
+        if(route === 'input') openFreshEntry();
+        else if(route === 'monitoring') $('btnDashboard').click();
+        else if(route === 'recap') fetchAndShowRekap();
+        else if(route === 'reports') { openWorkspace('reports'); renderTable(); }
+        else openWorkspace('home');
+    }));
+    window.addEventListener('popstate', () => openWorkspace(currentHashRoute(), false));
+    openWorkspace(currentHashRoute(), false);
 
     const sUrl = localStorage.getItem('prod_sb_url');
     const sKey = localStorage.getItem('prod_sb_key');
@@ -1198,7 +1290,7 @@ window.editLog=(id)=>{
     $('eQtyDus').value=r.qty_dus||''; $('eIsiDus').value=r.isi_dus||''; $('eQtyBox').value=r.qty_box||''; $('eIsiBox').value=r.isi_box||''; $('eQtyDusPlus').value=r.qty_dus_plus||''; $('eIsiDusPlus').value=r.isi_dus_plus||'';
     $('rUneven').value=r.reject_uneven||''; $('rMottled').value=r.reject_mottled||''; $('rStartup').value=r.reject_startup||''; $('rShort').value=r.reject_short||''; $('rFlow').value=r.reject_flow||''; $('rFlash').value=r.reject_flashing||''; $('rCrack').value=r.reject_crack||''; $('rSpot').value=r.reject_spot||''; $('rScratch').value=r.reject_scratch||''; $('rDirty').value=r.reject_dirty||'';
     if(r.detail_sisa){ const d=(typeof r.detail_sisa==='string')?JSON.parse(r.detail_sisa):r.detail_sisa; if(d.sblm)d.sblm.forEach((v,i)=>{if($('eSblm'+(i+1)))$('eSblm'+(i+1)).value=v===0?'':v}); if(d.ssdh)d.ssdh.forEach((v,i)=>{if($('eSsdh'+(i+1)))$('eSsdh'+(i+1)).value=v===0?'':v}); }
-    recalc(); $('mEntry').classList.add('open'); $('vLaporan').classList.remove('open');
+    recalc(); openWorkspace('input');
 };
 
 // --- FUNGSI RENDER MASTER (SUDAH DIUPGRADE PENCARIAN & ID-BASED) ---
@@ -1261,7 +1353,7 @@ function fetchAndShowRekap(){
     if($('fFrom').value) $('rDateFrom').value = $('fFrom').value;
     if($('fTo').value) $('rDateTo').value = $('fTo').value;
     processRekapFilter(); 
-    $('mRekap').classList.add('open'); 
+    openWorkspace('recap');
 }
 
 function processRekapFilter() {
