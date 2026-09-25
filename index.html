@@ -10,7 +10,6 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css?v=3.3.0">
-    <link rel="stylesheet" href="styles/modern-shell.css?v=4.0.0">
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -58,16 +57,6 @@
         </aside>
 
         <main class="erp-main">
-            <header class="workspace-topbar">
-                <div>
-                    <span class="workspace-kicker">OPERATIONS WORKSPACE</span>
-                    <h1>Production overview</h1>
-                </div>
-                <div class="workspace-topbar-actions">
-                    <span id="workspaceDate" class="workspace-date"></span>
-                    <button id="btnOpenInputFromTop" class="btn primary sm" type="button">+ Laporan shift</button>
-                </div>
-            </header>
             <section id="targetControlBoard" class="target-board card">
 
                 <!-- COMMAND HEADER -->
@@ -156,7 +145,7 @@
     </div>
 </div>
 
-<div id="vLaporan" class="modal full workspace-view" data-route="reports">
+<div id="vLaporan" class="modal full">
     <nav class="modal-sticky-nav">
         <div class="modal-nav-title">
             <span class="modal-nav-icon">📁</span>
@@ -194,7 +183,7 @@
     </div>
 </div>
 
-<div id="pDashboard" class="modal full workspace-view" data-route="monitoring">
+<div id="pDashboard" class="modal full">
     <nav class="modal-sticky-nav">
         <div class="modal-nav-title">
             <span class="modal-nav-icon">📊</span>
@@ -257,7 +246,7 @@
     </div> 
 </div> 
 
-<div id="mRekap" class="modal full workspace-view" data-route="recap">
+<div id="mRekap" class="modal full">
     <nav class="modal-sticky-nav">
         <div class="modal-nav-title">
             <span class="modal-nav-icon">🏭</span>
@@ -291,7 +280,7 @@
     </div>
 </div>
 
-<div id="mMaster" class="modal full workspace-view" data-route="products">
+<div id="mMaster" class="modal full">
     <nav class="modal-sticky-nav">
         <div class="modal-nav-title">
             <span class="modal-nav-icon">📦</span>
@@ -329,7 +318,7 @@
     </div>
 </div>
 
-<div id="mEntry" class="modal full entry-modal workspace-view" data-route="input">
+<div id="mEntry" class="modal full entry-modal">
     <div class="wrap-full entry-wrap">
         <div class="entry-card card">
             <div class="entry-premium-head">
@@ -561,16 +550,7 @@
     <div class="grid"><div><div class="muted">Project URL</div><input id="cfgUrl" class="input" /></div><div><div class="muted">Anon Public Key</div><textarea id="cfgKey" class="input" rows="4"></textarea></div><button id="btnSaveConfig" class="btn primary" style="width:100%;">SIMPAN & KONEK</button><button id="mConfigClose" class="btn" style="width:100%">Batal</button></div>
 </div></div>
 
-<nav class="mobile-dock" aria-label="Navigasi cepat">
-    <button type="button" data-mobile-route="home"><span>⌂</span><small>Beranda</small></button>
-    <button type="button" data-mobile-route="input"><span>＋</span><small>Input</small></button>
-    <button type="button" data-mobile-route="monitoring"><span>◫</span><small>Monitor</small></button>
-    <button type="button" data-mobile-route="reports"><span>≡</span><small>Data</small></button>
-    <button type="button" data-mobile-route="recap"><span>∑</span><small>Rekap</small></button>
-</nav>
-
-<script src="production-core.js?v=1.0.0"></script>
-<script src="app.js?v=3.5.0"></script>
-<script src="dashboard.js?v=3.5.0"></script>
+<script src="app.js?v=3.4.0"></script>
+<script src="dashboard.js?v=3.4.0"></script>
 </body>
 </html>

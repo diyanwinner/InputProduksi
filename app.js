@@ -1,3 +1,30 @@
+// Static-index fallback. Keep formulas aligned with production-core.js.
+const ProductionCore = globalThis.ProductionCore || (() => {
+    const STANDARD_SHIFT_HOURS = 8;
+    const toNumber = value => Number.isFinite(Number(value)) ? Number(value) : 0;
+    const clampEffectiveHours = (value, standard = 8) => Math.min(standard, Math.max(1, toNumber(value) || standard));
+    const targetShotPerHour = cycle => toNumber(cycle) > 0 ? Math.round(3600 / toNumber(cycle)) : 0;
+    const targetStatus = (okValue, standardValue, actualValue) => {
+        const ok = toNumber(okValue), actual = toNumber(actualValue), standard = toNumber(standardValue) > 0 ? toNumber(standardValue) : actual;
+        if(actual <= 0) return 'NO_TARGET';
+        if(ok >= standard * .97) return 'TARGET_STANDARD_TERCAPAI';
+        if(ok >= actual * .97) return 'TERCAPAI_AKTUAL_LOSS_CAPACITY';
+        return (ok / actual) * 100 >= 90 ? 'HAMPIR_TIDAK_TARGET' : 'TIDAK_TARGET';
+    };
+    const calculateProduction = input => {
+        const standardHours=toNumber(input.standardShiftHours)||8, effectiveHours=clampEffectiveHours(input.effectiveHours,standardHours), gram=toNumber(input.gram);
+        const standardCavity=Math.max(1,toNumber(input.standardCavity)), activeCavity=Math.min(Math.max(1,toNumber(input.activeCavity)),standardCavity), counter=toNumber(input.counter);
+        const factor=input.type==='kg_sisa'&&gram>0?1000/gram:1, beforePcs=toNumber(input.beforeRemainder)*factor, afterPcs=toNumber(input.afterRemainder)*factor;
+        const packedPcs=toNumber(input.packedPcs), okPcs=packedPcs-beforePcs+afterPcs, productionPcs=counter*activeCavity, resultPcs=productionPcs+beforePcs-afterPcs, rejectPcs=productionPcs-okPcs;
+        const okKg=okPcs*gram/1000, rejectKg=rejectPcs*gram/1000, runnerKg=counter*toNumber(input.runnerGram)/1000;
+        const remainingMaterialKg=toNumber(input.materialAllocation)+toNumber(input.materialStock)-runnerKg-rejectKg-okKg-toNumber(input.blockKg), yieldPct=resultPcs>0?okPcs/resultPcs*100:0;
+        const shotPerHour=targetShotPerHour(input.cycleTimeSec), targetHourStandard=shotPerHour*standardCavity, targetHourActual=shotPerHour*activeCavity, plannedStopHours=Math.max(0,standardHours-effectiveHours);
+        const targetStandardPcs=targetHourStandard*standardHours, targetActualPcs=targetHourActual*effectiveHours;
+        return {standardHours,effectiveHours,plannedStopHours,standardCavity,activeCavity,beforePcs,afterPcs,packedPcs,productionPcs,resultPcs,okPcs,rejectPcs,okKg,rejectKg,runnerKg,remainingMaterialKg,yieldPct,shotPerHour,targetHourStandard,targetHourActual,targetStandardPcs,targetActualPcs,achievementStandardPct:targetStandardPcs>0?okPcs/targetStandardPcs*100:0,achievementActualPct:targetActualPcs>0?okPcs/targetActualPcs*100:0,gapStandardPcs:targetStandardPcs>0?okPcs-targetStandardPcs:0,gapActualPcs:targetActualPcs>0?okPcs-targetActualPcs:0,timeLossPcs:Math.max(0,targetHourStandard*plannedStopHours),cavityLossPcs:Math.max(0,shotPerHour*(standardCavity-activeCavity)*effectiveHours),capacityLossTotalPcs:Math.max(0,targetStandardPcs-targetActualPcs),status:targetStatus(okPcs,targetStandardPcs,targetActualPcs),overpack:packedPcs>resultPcs};
+    };
+    return {STANDARD_SHIFT_HOURS,toNumber,clampEffectiveHours,targetShotPerHour,targetStatus,calculateProduction};
+})();
+
 // --- HELPER FUNCTIONS ---
 const $ = id => document.getElementById(id);
 const toNum = ProductionCore.toNumber;
@@ -63,6 +90,22 @@ function openWorkspace(route = 'home', updateHash = true) {
 
 function currentHashRoute() {
     return location.hash.replace(/^#\/?/, '') || 'home';
+}
+
+function installWorkspaceShell() {
+    const main = document.querySelector('.erp-main');
+    if(main && !$('workspaceDate')) {
+        main.insertAdjacentHTML('afterbegin', '<header class="workspace-topbar"><div><span class="workspace-kicker">OPERATIONS WORKSPACE</span><h1>Production overview</h1></div><div class="workspace-topbar-actions"><span id="workspaceDate" class="workspace-date"></span><button id="btnOpenInputFromTop" class="btn primary sm" type="button">+ Laporan shift</button></div></header>');
+    }
+    const routes = { vLaporan:'reports', pDashboard:'monitoring', mRekap:'recap', mMaster:'products', mEntry:'input' };
+    Object.entries(routes).forEach(([id, route]) => {
+        if(!$(id)) return;
+        $(id).classList.add('workspace-view');
+        $(id).dataset.route = route;
+    });
+    if(!document.querySelector('.mobile-dock')) {
+        document.body.insertAdjacentHTML('beforeend', '<nav class="mobile-dock" aria-label="Navigasi cepat"><button type="button" data-mobile-route="home"><span>⌂</span><small>Beranda</small></button><button type="button" data-mobile-route="input"><span>＋</span><small>Input</small></button><button type="button" data-mobile-route="monitoring"><span>◫</span><small>Monitor</small></button><button type="button" data-mobile-route="reports"><span>≡</span><small>Data</small></button><button type="button" data-mobile-route="recap"><span>∑</span><small>Rekap</small></button></nav>');
+    }
 }
 
 function getProductCycleTime(prod) {
@@ -210,6 +253,7 @@ function extractLogTarget(r) {
 const ADMIN_PIN = "1234"; 
 
 document.addEventListener('DOMContentLoaded', () => {
+    installWorkspaceShell();
     // --- ACTIONS (MENU UTAMA) ---
     const openFreshEntry = () => { openWorkspace('input'); resetEntryForm(); scrollEntryFormToTop('auto'); };
     $('btnAdd').onclick = openFreshEntry;
