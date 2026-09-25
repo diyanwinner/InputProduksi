@@ -60,5 +60,28 @@
         return [...counts].map(([reason, count]) => ({ reason, count })).sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason));
     }
 
-    return { latestShift, filterRows, buildSnapshot, reasonSummary };
+    function pareto(items) {
+        const sorted = Object.entries(items || {}).map(([label, value]) => ({ label, value: number(value) })).filter(item => item.value > 0).sort((a, b) => b.value - a.value);
+        const total = sorted.reduce((sum, item) => sum + item.value, 0);
+        let running = 0;
+        return sorted.map(item => ({ ...item, cumulativePct: total ? (running += item.value) / total * 100 : 0 }));
+    }
+
+    function targetTrend(rows, targetOf) {
+        const dates = new Map();
+        (rows || []).forEach(row => {
+            const date = text(row.tanggal) || '-';
+            if(!dates.has(date)) dates.set(date, { date, target: 0, actual: 0 });
+            const point = dates.get(date), target = targetOf(row) || {};
+            point.target += number(target.targetActual);
+            point.actual += number(row.okpcs);
+        });
+        return [...dates.values()].sort((a, b) => a.date.localeCompare(b.date));
+    }
+
+    function lineRanking(rows, targetOf) {
+        return buildSnapshot(rows, targetOf).sort((a, b) => b.achievement - a.achievement || b.yieldPct - a.yieldPct || a.line.localeCompare(b.line));
+    }
+
+    return { latestShift, filterRows, buildSnapshot, reasonSummary, pareto, targetTrend, lineRanking };
 });

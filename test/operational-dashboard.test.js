@@ -25,3 +25,16 @@ test('builds line snapshot ordered by the most critical gap', () => {
 test('summarizes operational reasons by frequency', () => {
     assert.deepEqual(dashboard.reasonSummary(rows)[0], { reason: 'Mesin trouble', count: 2 });
 });
+
+test('calculates cumulative pareto percentages', () => {
+    const result = dashboard.pareto({ A: 60, B: 30, C: 10 });
+    assert.deepEqual(result.map(x => x.cumulativePct), [60, 90, 100]);
+});
+
+test('builds target versus actual trend and line ranking', () => {
+    const targetOf = row => ({ targetActual: 100, gapActual: row.okpcs - 100, unsafe: row.okpcs < 97 });
+    const trend = dashboard.targetTrend(rows, targetOf);
+    assert.equal(trend.at(-1).target, 200);
+    assert.equal(trend.at(-1).actual, 200);
+    assert.equal(dashboard.lineRanking(rows.slice(1), targetOf)[0].line, 'L-02');
+});

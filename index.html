@@ -194,6 +194,8 @@
             <span class="badge">Live</span>
         </div>
         <div class="modal-nav-actions">
+            <label class="dash-auto-label"><input id="dashAutoRefresh" type="checkbox"> Auto 60 dtk</label>
+            <button id="btnTvMode" class="btn info sm">MODE TV</button>
             <button id="pDashboardClose" class="btn danger sm">KEMBALI</button>
         </div>
     </nav>
@@ -230,8 +232,18 @@
         </div>
 
         <div class="row" style="align-items:stretch;">
-            <div class="card" style="flex:2; min-width:300px;"><h3 style="margin-bottom:16px; font-size:1rem;">📈 Trend Produksi</h3><div style="height:300px;"><canvas id="chartTrend"></canvas></div></div>
-            <div class="card" style="flex:1; min-width:300px;"><h3 style="margin-bottom:16px; font-size:1rem; color:var(--danger);">⚠ Pareto Reject (Jenis)</h3><div style="height:300px;"><canvas id="chartPareto"></canvas></div></div>
+            <div class="card" style="flex:2; min-width:300px;"><h3 style="margin-bottom:16px; font-size:1rem;">Trend Target vs Aktual</h3><div style="height:300px;"><canvas id="chartTrend"></canvas></div></div>
+            <div class="card" style="flex:1; min-width:300px;"><h3 style="margin-bottom:16px; font-size:1rem; color:var(--danger);">Pareto Reject 80/20</h3><div style="height:300px;"><canvas id="chartPareto"></canvas></div></div>
+        </div>
+
+        <div class="row" style="align-items:stretch;">
+            <div class="card" style="flex:1; min-width:300px;"><h3 style="margin-bottom:16px; font-size:1rem;">Downtime Pareto</h3><div style="height:280px;"><canvas id="chartDowntime"></canvas></div></div>
+            <div class="card" style="flex:1; min-width:300px;"><h3 style="margin-bottom:16px; font-size:1rem;">Ranking Line</h3><div class="table-container"><table id="tblLineRanking"><thead><tr><th>#</th><th>Line</th><th class="right">Achv</th><th class="right">Yield</th><th class="right">Gap</th></tr></thead><tbody></tbody></table></div></div>
+        </div>
+
+        <div class="card">
+            <h3 style="margin-bottom:12px; font-size:1rem;">Detail kendali target</h3>
+            <div class="table-container"><table id="tblTargetDetail"><thead><tr><th>Status</th><th>Line</th><th>Shift</th><th>Produk</th><th class="right">Jam efektif</th><th class="right">Target</th><th class="right">OK</th><th class="right">Gap</th><th class="right">Achv</th><th>Catatan operasional</th></tr></thead><tbody></tbody></table></div>
         </div>
 
         <div class="card">

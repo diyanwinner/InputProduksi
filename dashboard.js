@@ -2,6 +2,8 @@
 
 let chartTrendInstance = null;
 let chartParetoInstance = null;
+let chartDowntimeInstance = null;
+let dashboardRefreshTimer = null;
 
 function dashFmtInt(n) { return Math.round(+n || 0).toLocaleString('id-ID'); }
 function dashFmtPct(n) { return ((+n || 0).toFixed(1)) + '%'; }
@@ -11,6 +13,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnDash = document.getElementById('btnDashboard');
     const closeDash = document.getElementById('pDashboardClose');
     const loadDash = document.getElementById('btnLoadDash');
+    const autoRefresh = document.getElementById('dashAutoRefresh');
+    const tvMode = document.getElementById('btnTvMode');
 
     if(btnDash) {
         btnDash.onclick = () => {
@@ -26,6 +30,11 @@ document.addEventListener('DOMContentLoaded', () => {
     
     if(closeDash) closeDash.onclick = () => openWorkspace('home');
     if(loadDash) loadDash.onclick = renderDashboard;
+    if(autoRefresh) autoRefresh.onchange = () => {
+        clearInterval(dashboardRefreshTimer);
+        dashboardRefreshTimer = autoRefresh.checked ? setInterval(() => { if(document.body.dataset.route === 'monitoring') renderDashboard(); }, 60000) : null;
+    };
+    if(tvMode) tvMode.onclick = () => { document.getElementById('pDashboard')?.classList.toggle('tv-mode'); tvMode.textContent = document.getElementById('pDashboard')?.classList.contains('tv-mode') ? 'KELUAR TV' : 'MODE TV'; };
 });
 
 function renderDashboard() {
@@ -76,29 +85,24 @@ function renderDashboard() {
     renderOperationalSnapshot(dataDash, startStr, endStr, shiftFilter);
 
     // 3. CHART 1: TREND PRODUKSI
-    const trendMap = {};
-    dataDash.forEach(r => {
-        if(!trendMap[r.tanggal]) trendMap[r.tanggal] = { ok:0, rej:0 };
-        trendMap[r.tanggal].ok += (+r.okpcs); 
-        trendMap[r.tanggal].rej += (+r.reject);
-    });
-    const labelsTrend = Object.keys(trendMap).sort();
+    const trend = OperationalDashboard.targetTrend(dataDash, extractLogTarget);
+    const labelsTrend = trend.map(point => point.date);
     
     const ctxTrend = document.getElementById('chartTrend').getContext('2d');
     if(chartTrendInstance) chartTrendInstance.destroy();
     chartTrendInstance = new Chart(ctxTrend, {
-        type: 'bar',
+        type: 'line',
         data: {
             labels: labelsTrend,
             datasets: [
-                { label: 'OK (Pcs)', data: labelsTrend.map(d => trendMap[d].ok), backgroundColor: '#34D399', borderRadius: 4 },
-                { label: 'Reject (Pcs)', data: labelsTrend.map(d => trendMap[d].rej), backgroundColor: '#F87171', borderRadius: 4 }
+                { label: 'Target Aktual', data: trend.map(point => point.target), borderColor: '#FBBF24', backgroundColor: 'rgba(251,191,36,.12)', tension:.25, fill:true },
+                { label: 'OK Aktual', data: trend.map(point => point.actual), borderColor: '#34D399', backgroundColor: 'rgba(52,211,153,.1)', tension:.25, fill:true }
             ]
         },
         options: { 
             responsive: true, 
             maintainAspectRatio: false, 
-            scales: { x: { stacked: true, ticks:{color:'#94A3B8'} }, y: { stacked: true, ticks:{color:'#94A3B8'}, grid:{color:'rgba(148,163,184,0.16)'} } }, 
+            scales: { x: { ticks:{color:'#94A3B8'} }, y: { beginAtZero:true, ticks:{color:'#94A3B8'}, grid:{color:'rgba(148,163,184,0.16)'} } },
             plugins: { legend: { position:'bottom', labels: {color:'#E2E8F0'} } } 
         }
     });
@@ -115,25 +119,25 @@ function renderDashboard() {
         rejectCounts['scratch'] += (+r.reject_scratch || 0); rejectCounts['dirty'] += (+r.reject_dirty || 0);
     });
 
-    const sortedPareto = Object.entries(rejectCounts).sort((a,b) => b[1] - a[1]).filter(x => x[1] > 0);
+    const sortedPareto = OperationalDashboard.pareto(rejectCounts);
     
     const ctxPareto = document.getElementById('chartPareto').getContext('2d');
     if(chartParetoInstance) chartParetoInstance.destroy();
     
     chartParetoInstance = new Chart(ctxPareto, {
-        type: 'bar',
         data: {
-            labels: sortedPareto.map(x => x[0].toUpperCase()),
-            datasets: [{ label: 'Total Defect', data: sortedPareto.map(x => x[1]), backgroundColor: '#818CF8', borderRadius: 4 }]
+            labels: sortedPareto.map(x => x.label.toUpperCase()),
+            datasets: [{ type:'bar', label:'Total Defect', data:sortedPareto.map(x => x.value), backgroundColor:'#818CF8', borderRadius:4, yAxisID:'y' }, { type:'line', label:'Kumulatif %', data:sortedPareto.map(x => x.cumulativePct), borderColor:'#FBBF24', pointBackgroundColor:'#FBBF24', yAxisID:'pct' }]
         },
         options: { 
-            indexAxis: 'y', 
             responsive: true, 
             maintainAspectRatio: false, 
-            plugins: { legend: { display: false } }, 
-            scales: { x: { ticks: { color: '#94A3B8' }, grid:{color:'rgba(148,163,184,0.16)'} }, y: { ticks: { color: '#E2E8F0' } } } 
+            plugins: { legend: { position:'bottom', labels:{color:'#E2E8F0'} }, annotation: {} },
+            scales: { x: { ticks:{color:'#E2E8F0'} }, y:{beginAtZero:true,ticks:{color:'#94A3B8'}}, pct:{position:'right',min:0,max:100,ticks:{color:'#FBBF24',callback:value=>value+'%'},grid:{drawOnChartArea:false}} }
         }
     });
+
+    renderDowntimeAndRanking(dataDash);
     
 
     // 5. TARGET CONTROL DETAIL TABLE
@@ -206,6 +210,20 @@ function renderDashboard() {
             </tr>
         `).join('');
     }
+}
+
+function renderDowntimeAndRanking(data) {
+    const downtimeCounts = {};
+    data.forEach(row => { const reason = row.planned_stop_reason || 'Tanpa alasan'; const hours = +row.planned_stop_hours || 0; if(hours > 0) downtimeCounts[reason] = (downtimeCounts[reason] || 0) + hours; });
+    const downtime = OperationalDashboard.pareto(downtimeCounts);
+    const canvas = document.getElementById('chartDowntime');
+    if(chartDowntimeInstance) chartDowntimeInstance.destroy();
+    chartDowntimeInstance = new Chart(canvas.getContext('2d'), { type:'bar', data:{ labels:downtime.map(x=>x.label), datasets:[{label:'Jam stop',data:downtime.map(x=>x.value),backgroundColor:'#F59E0B',borderRadius:4}] }, options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{beginAtZero:true,ticks:{color:'#94A3B8'}},y:{ticks:{color:'#E2E8F0'}}}} });
+
+    const ranking = OperationalDashboard.lineRanking(data, row => { const target = extractLogTarget(row); return {...target, unsafe:isTargetUnsafe(target.status)}; });
+    const body = document.querySelector('#tblLineRanking tbody');
+    body.innerHTML = ranking.map((line,index) => `<tr class="dash-drill-row" data-line="${escapeHtml(line.line)}"><td>${index+1}</td><td><b>${escapeHtml(line.line)}</b></td><td class="right">${dashFmtPct(line.achievement)}</td><td class="right">${dashFmtPct(line.yieldPct)}</td><td class="right ${line.gap<0?'text-danger':'text-ok'}">${dashFmtSigned(line.gap)}</td></tr>`).join('') || '<tr><td colspan="5">Belum ada data.</td></tr>';
+    body.querySelectorAll('[data-line]').forEach(row => row.onclick = () => { document.getElementById('fLine').value = row.dataset.line; document.getElementById('fFrom').value = document.getElementById('dFrom').value; document.getElementById('fTo').value = document.getElementById('dTo').value; openWorkspace('reports'); renderTable(); });
 }
 
 function renderOperationalSnapshot(data, start, end, shift) {

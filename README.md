@@ -6,6 +6,8 @@ Dashboard operasional Fase 4 menambahkan snapshot line pada shift terbaru, antre
 
 Governance Center Fase 5 menyediakan alur approval laporan, penguncian periode, audit aktivitas, import master CSV, export backup, dan monitoring error lokal. Area ini mengikuti proteksi admin yang sudah ada tanpa mengubah konfigurasi Supabase atau nilai PIN.
 
+Dashboard operasional kini mencakup trend target versus aktual, Pareto reject kumulatif 80/20, downtime Pareto, ranking line dengan drill-down, auto-refresh opsional, dan mode TV. Supabase Auth dan PIN admin tetap tidak diubah.
+
 ## Menjalankan aplikasi
 
 Gunakan static server agar perilakunya sama dengan deployment:
