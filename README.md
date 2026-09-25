@@ -10,6 +10,8 @@ Dashboard operasional kini mencakup trend target versus aktual, Pareto reject ku
 
 Monitoring Room memakai tampilan bertahap: ringkasan periode tampil lebih dulu, sedangkan detail produk atau mesin dan analitik lanjutan hanya dimuat setelah pengguna membuat pilihan.
 
+Pemeriksaan mesin menampilkan rincian per produk yang berjalan di mesin tersebut. Pemeriksaan produk mewajibkan pasangan kode dan nama yang tepat agar varian bernama mirip tidak tercampur.
+
 ## Menjalankan aplikasi
 
 Gunakan static server agar perilakunya sama dengan deployment:

@@ -29,12 +29,12 @@
         });
     }
 
-    function buildSnapshot(rows, targetOf) {
+    function buildGroupedSnapshot(rows, targetOf, groupOf) {
         const groups = new Map();
         (rows || []).forEach(row => {
-            const line = normalizeLine(row.line) || '-';
-            if (!groups.has(line)) groups.set(line, { line, rows: 0, ok: 0, reject: 0, target: 0, gap: 0, loss: 0, unsafe: 0, reasons: new Map() });
-            const item = groups.get(line);
+            const group = groupOf(row);
+            if (!groups.has(group.key)) groups.set(group.key, { ...group, rows: 0, ok: 0, reject: 0, target: 0, gap: 0, loss: 0, unsafe: 0, reasons: new Map() });
+            const item = groups.get(group.key);
             const target = targetOf(row) || {};
             item.rows += 1;
             item.ok += number(row.okpcs);
@@ -52,7 +52,22 @@
             achievement: item.target > 0 ? item.ok / item.target * 100 : 0,
             yieldPct: item.ok + item.reject > 0 ? item.ok / (item.ok + item.reject) * 100 : 0,
             topReason: [...item.reasons].sort((a, b) => b[1] - a[1])[0]?.[0] || '-'
-        })).sort((a, b) => a.gap - b.gap || a.line.localeCompare(b.line));
+        })).sort((a, b) => a.gap - b.gap || a.label.localeCompare(b.label));
+    }
+
+    function buildSnapshot(rows, targetOf) {
+        return buildGroupedSnapshot(rows, targetOf, row => {
+            const line = normalizeLine(row.line) || '-';
+            return { key: line, label: line, line };
+        });
+    }
+
+    function buildProductBreakdown(rows, targetOf) {
+        return buildGroupedSnapshot(rows, targetOf, row => {
+            const kode = text(row.kode) || '-';
+            const nama = text(row.nama) || '-';
+            return { key: `${kode}|${nama}`, label: `${kode} — ${nama}`, kode, nama, line: normalizeLine(row.line) || '-' };
+        });
     }
 
     function reasonSummary(rows) {
@@ -85,5 +100,5 @@
         return buildSnapshot(rows, targetOf).sort((a, b) => b.achievement - a.achievement || b.yieldPct - a.yieldPct || a.line.localeCompare(b.line));
     }
 
-    return { latestShift, filterRows, buildSnapshot, reasonSummary, pareto, targetTrend, lineRanking };
+    return { latestShift, filterRows, buildSnapshot, buildProductBreakdown, reasonSummary, pareto, targetTrend, lineRanking };
 });

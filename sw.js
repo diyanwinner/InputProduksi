@@ -1,4 +1,4 @@
-const CACHE = 'input-produksi-v5';
+const CACHE = 'input-produksi-v5.2';
 const SHELL = ['./', './index.html', './style.css', './styles/modern-shell.css', './production-core.js', './operational-dashboard.js', './governance-core.js', './app.js', './dashboard.js', './governance.js', './manifest.webmanifest'];
 
 self.addEventListener('install', event => event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)).then(() => self.skipWaiting())));

@@ -23,6 +23,13 @@ test('builds line snapshot ordered by the most critical gap', () => {
     assert.equal(snapshot[0].topReason, 'Material telat');
 });
 
+test('builds a product breakdown for a selected machine', () => {
+    const result = dashboard.buildProductBreakdown(rows, row => ({ targetActual:100, gapActual:row.okpcs-100, unsafe:row.okpcs<97 }));
+    assert.equal(result.length, 2);
+    assert.equal(result[0].nama, 'Produk A');
+    assert.match(result[0].label, /P01/);
+});
+
 test('summarizes operational reasons by frequency', () => {
     assert.deepEqual(dashboard.reasonSummary(rows)[0], { reason: 'Mesin trouble', count: 2 });
 });

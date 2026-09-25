@@ -11,7 +11,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=3.3.0">
+    <link rel="stylesheet" href="style.css?v=5.2.0">
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -232,7 +232,7 @@
             <div class="dash-focus-tabs" role="tablist"><button class="active" type="button" data-focus-mode="line">Per Mesin</button><button type="button" data-focus-mode="product">Per Produk</button></div>
             <div class="dash-focus-controls">
                 <label id="dashLineControl"><span>Mesin / Line</span><select id="dFocusLine" class="input"><option value="">Pilih mesin...</option></select></label>
-                <label id="dashProductControl" hidden><span>Produk</span><input id="dFocusProduct" class="input" list="dashProductOptions" placeholder="Ketik kode atau nama produk..."><datalist id="dashProductOptions"></datalist></label>
+                <label id="dashProductControl" hidden><span>Produk spesifik</span><input id="dFocusProduct" class="input" list="dashProductOptions" placeholder="Pilih kode dan nama produk yang tepat..."><datalist id="dashProductOptions"></datalist></label>
                 <button id="btnApplyDashFocus" class="btn primary" type="button">Tampilkan Detail</button>
             </div>
             <div id="dashFocusEmpty" class="dash-focus-empty">Belum ada detail ditampilkan.</div>
@@ -565,10 +565,10 @@
 </div></div>
 
 <script src="production-core.js?v=1.0.0"></script>
-<script src="operational-dashboard.js?v=4.0.0"></script>
+<script src="operational-dashboard.js?v=5.2.0"></script>
 <script src="governance-core.js?v=5.0.0"></script>
 <script src="app.js?v=3.5.0"></script>
-<script src="dashboard.js?v=4.0.0"></script>
+<script src="dashboard.js?v=5.2.0"></script>
 <script src="governance.js?v=5.0.0"></script>
 </body>
 </html>

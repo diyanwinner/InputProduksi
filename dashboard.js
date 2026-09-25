@@ -118,15 +118,17 @@ function renderDashboard() {
     populateDashboardFocusOptions(periodData);
     const focusValue = dashboardFocusMode === 'line' ? document.getElementById('dFocusLine').value.trim() : document.getElementById('dFocusProduct').value.trim();
     if(!focusValue) { clearDashboardFocus(); return; }
-    const productCode = focusValue.split(' — ')[0].trim();
+    const separatorIndex = focusValue.indexOf(' — ');
+    const productCode = separatorIndex >= 0 ? focusValue.slice(0, separatorIndex).trim() : '';
+    const productName = separatorIndex >= 0 ? focusValue.slice(separatorIndex + 3).trim() : '';
     const dataDash = periodData.filter(row => dashboardFocusMode === 'line'
         ? String(row.line || '').toUpperCase() === focusValue.toUpperCase()
-        : String(row.kode || '').toUpperCase() === productCode.toUpperCase() || String(row.nama || '').toLowerCase().includes(focusValue.toLowerCase()));
+        : productCode && productName && String(row.kode || '').trim().toUpperCase() === productCode.toUpperCase() && String(row.nama || '').trim().toLowerCase() === productName.toLowerCase());
     if(!dataDash.length) { document.getElementById('dashFocusEmpty').textContent = 'Data pilihan tidak ditemukan pada periode ini.'; document.getElementById('dashFocusEmpty').hidden = false; document.getElementById('dashFocusedContent').hidden = true; return; }
     document.getElementById('dashFocusEmpty').hidden = true;
     document.getElementById('dashFocusedContent').hidden = false;
     document.getElementById('opsSnapshotTitle').textContent = dashboardFocusMode === 'line' ? `Mesin ${focusValue}` : `Produk ${focusValue}`;
-    renderOperationalSnapshot(dataDash, startStr, endStr, shiftFilter);
+    renderOperationalSnapshot(dataDash, startStr, endStr, shiftFilter, dashboardFocusMode);
     if(!document.getElementById('dashAnalytics').open) return;
     const targetRows = dataDash.map(r => ({ raw:r, tg:extractLogTarget(r) })).filter(x => x.tg.targetActual > 0);
 
@@ -272,12 +274,14 @@ function renderDowntimeAndRanking(data) {
     body.querySelectorAll('[data-line]').forEach(row => row.onclick = () => { document.getElementById('fLine').value = row.dataset.line; document.getElementById('fFrom').value = document.getElementById('dFrom').value; document.getElementById('fTo').value = document.getElementById('dTo').value; openWorkspace('reports'); renderTable(); });
 }
 
-function renderOperationalSnapshot(data, start, end, shift) {
+function renderOperationalSnapshot(data, start, end, shift, mode = 'line') {
     const targetOf = row => {
         const target = typeof extractLogTarget === 'function' ? extractLogTarget(row) : {};
         return { ...target, unsafe: typeof isTargetUnsafe === 'function' ? isTargetUnsafe(target.status) : (+target.gapActual || 0) < 0 };
     };
-    const snapshot = OperationalDashboard.buildSnapshot(data, targetOf);
+    const snapshot = mode === 'line'
+        ? OperationalDashboard.buildProductBreakdown(data, targetOf)
+        : OperationalDashboard.buildSnapshot(data, targetOf);
     const periodBadge = document.getElementById('opsPeriodBadge');
     if(periodBadge) periodBadge.textContent = `${start} — ${end}${shift ? ` · Shift ${shift}` : ''}`;
 
@@ -286,7 +290,7 @@ function renderOperationalSnapshot(data, start, end, shift) {
         const state = line.unsafe ? 'critical' : line.achievement < 97 ? 'watch' : 'safe';
         const label = state === 'critical' ? 'Tindak lanjut' : state === 'watch' ? 'Pantau' : 'Aman';
         return `<article class="ops-line-card ${state}">
-            <div class="ops-line-head"><strong>${escapeHtml(line.line)}</strong><span>${label}</span></div>
+            <div class="ops-line-head"><strong>${escapeHtml(line.label || line.line)}</strong><span>${label}</span></div>
             <div class="ops-line-ach">${dashFmtPct(line.achievement)}</div><small>Pencapaian target aktual</small>
             <div class="ops-line-metrics"><span><b>${dashFmtSigned(line.gap)}</b> Gap</span><span><b>${dashFmtInt(line.reject)}</b> Reject</span><span><b>${dashFmtPct(line.yieldPct)}</b> Yield</span></div>
             <div class="ops-line-reason" title="Penyebab dominan">${escapeHtml(line.topReason)}</div>
@@ -295,7 +299,7 @@ function renderOperationalSnapshot(data, start, end, shift) {
 
     const queue = document.getElementById('opsActionQueue');
     const critical = snapshot.filter(line => line.unsafe || line.gap < 0).slice(0, 6);
-    if(queue) queue.innerHTML = critical.length ? critical.map((line, index) => `<div class="ops-action-item"><span>${index + 1}</span><div><b>${escapeHtml(line.line)} · Gap ${dashFmtSigned(line.gap)}</b><small>${escapeHtml(line.topReason)} · loss ${dashFmtInt(line.loss)} pcs</small></div></div>`).join('') : '<div class="ops-empty compact">Tidak ada line kritis.</div>';
+    if(queue) queue.innerHTML = critical.length ? critical.map((line, index) => `<div class="ops-action-item"><span>${index + 1}</span><div><b>${escapeHtml(line.label || line.line)} · Gap ${dashFmtSigned(line.gap)}</b><small>${escapeHtml(line.topReason)} · loss ${dashFmtInt(line.loss)} pcs</small></div></div>`).join('') : '<div class="ops-empty compact">Tidak ada data kritis.</div>';
 
     const reasonList = document.getElementById('opsReasonList');
     const reasons = OperationalDashboard.reasonSummary(data).slice(0, 5);
