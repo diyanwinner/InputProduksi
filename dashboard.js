@@ -38,17 +38,11 @@ function renderDashboard() {
     const startStr = document.getElementById('dFrom').value;
     const endStr = document.getElementById('dTo').value;
     const lineFilter = document.getElementById('dLine').value.trim().toUpperCase();
-    
-    const dStart = new Date(startStr);
-    const dEnd = new Date(endStr);
+    const shiftFilter = document.getElementById('dShift')?.value || '';
 
     // 1. FILTER DATA
-    const dataDash = logs.filter(r => {
-        const d = new Date(r.tanggal);
-        const dateOk = d >= dStart && d <= dEnd;
-        const lineOk = lineFilter ? (r.line || '').toUpperCase().includes(lineFilter) : true;
-        return dateOk && lineOk;
-    });
+    const sourceRows = typeof uniqueDashboardLogs === 'function' ? uniqueDashboardLogs(logs) : logs;
+    const dataDash = OperationalDashboard.filterRows(sourceRows, { from: startStr, to: endStr, line: lineFilter, shift: shiftFilter });
 
     if(dataDash.length === 0) {
         alert("Tidak ada data produksi di periode/filter ini.");
@@ -78,6 +72,8 @@ function renderDashboard() {
     if(document.getElementById('kpiTargetOk')) document.getElementById('kpiTargetOk').innerText = targetOk.length.toLocaleString('id-ID');
     if(document.getElementById('kpiGapActual')) document.getElementById('kpiGapActual').innerText = dashFmtSigned(gapActualTotal);
     if(document.getElementById('kpiCapacityLoss')) document.getElementById('kpiCapacityLoss').innerText = dashFmtInt(capacityLossTotal);
+
+    renderOperationalSnapshot(dataDash, startStr, endStr, shiftFilter);
 
     // 3. CHART 1: TREND PRODUKSI
     const trendMap = {};
@@ -210,4 +206,37 @@ function renderDashboard() {
             </tr>
         `).join('');
     }
+}
+
+function renderOperationalSnapshot(data, start, end, shift) {
+    const targetOf = row => {
+        const target = typeof extractLogTarget === 'function' ? extractLogTarget(row) : {};
+        return { ...target, unsafe: typeof isTargetUnsafe === 'function' ? isTargetUnsafe(target.status) : (+target.gapActual || 0) < 0 };
+    };
+    const latest = OperationalDashboard.latestShift(data);
+    const latestRows = latest ? data.filter(row => String(row.tanggal || '') === latest.tanggal && String(row.shift || '') === latest.shift) : [];
+    const snapshot = OperationalDashboard.buildSnapshot(latestRows, targetOf);
+    const periodBadge = document.getElementById('opsPeriodBadge');
+    if(periodBadge) periodBadge.textContent = latest ? `${latest.tanggal} · Shift ${latest.shift}` : `${start} — ${end}${shift ? ` · Shift ${shift}` : ''}`;
+
+    const grid = document.getElementById('opsLineGrid');
+    if(grid) grid.innerHTML = snapshot.length ? snapshot.map(line => {
+        const state = line.unsafe ? 'critical' : line.achievement < 97 ? 'watch' : 'safe';
+        const label = state === 'critical' ? 'Tindak lanjut' : state === 'watch' ? 'Pantau' : 'Aman';
+        return `<article class="ops-line-card ${state}">
+            <div class="ops-line-head"><strong>${escapeHtml(line.line)}</strong><span>${label}</span></div>
+            <div class="ops-line-ach">${dashFmtPct(line.achievement)}</div><small>Pencapaian target aktual</small>
+            <div class="ops-line-metrics"><span><b>${dashFmtSigned(line.gap)}</b> Gap</span><span><b>${dashFmtInt(line.reject)}</b> Reject</span><span><b>${dashFmtPct(line.yieldPct)}</b> Yield</span></div>
+            <div class="ops-line-reason" title="Penyebab dominan">${escapeHtml(line.topReason)}</div>
+        </article>`;
+    }).join('') : '<div class="ops-empty">Tidak ada snapshot line untuk filter ini.</div>';
+
+    const queue = document.getElementById('opsActionQueue');
+    const critical = snapshot.filter(line => line.unsafe || line.gap < 0).slice(0, 6);
+    if(queue) queue.innerHTML = critical.length ? critical.map((line, index) => `<div class="ops-action-item"><span>${index + 1}</span><div><b>${escapeHtml(line.line)} · Gap ${dashFmtSigned(line.gap)}</b><small>${escapeHtml(line.topReason)} · loss ${dashFmtInt(line.loss)} pcs</small></div></div>`).join('') : '<div class="ops-empty compact">Tidak ada line kritis.</div>';
+
+    const reasonList = document.getElementById('opsReasonList');
+    const reasons = OperationalDashboard.reasonSummary(latestRows).slice(0, 5);
+    const max = reasons[0]?.count || 1;
+    if(reasonList) reasonList.innerHTML = reasons.length ? reasons.map(item => `<div class="ops-reason-item"><div><span>${escapeHtml(item.reason)}</span><b>${item.count}</b></div><i style="--reason-width:${item.count / max * 100}%"></i></div>`).join('') : '<div class="ops-empty compact">Belum ada alasan tercatat.</div>';
 }

@@ -63,12 +63,13 @@ const WORKSPACE_ROUTES = {
     monitoring: 'pDashboard',
     reports: 'vLaporan',
     recap: 'mRekap',
-    products: 'mMaster'
+    products: 'mMaster',
+    governance: 'mGovernance'
 };
 let adminWorkspaceGranted = false;
 
 function setActiveNavigation(route) {
-    const desktopMap = { input:'btnAdd', monitoring:'btnDashboard', reports:'btnOpenLog', recap:'btnRekap', products:'btnMaster' };
+    const desktopMap = { input:'btnAdd', monitoring:'btnDashboard', reports:'btnOpenLog', recap:'btnRekap', products:'btnMaster', governance:'btnGovernance' };
     document.querySelectorAll('.side-nav-item').forEach(item => item.classList.remove('active'));
     if($(desktopMap[route])) $(desktopMap[route]).classList.add('active');
     document.querySelectorAll('[data-mobile-route]').forEach(item => item.classList.toggle('active', item.dataset.mobileRoute === route));
@@ -76,7 +77,7 @@ function setActiveNavigation(route) {
 
 function openWorkspace(route = 'home', updateHash = true) {
     let safeRoute = Object.hasOwn(WORKSPACE_ROUTES, route) ? route : 'home';
-    if(safeRoute === 'products' && !adminWorkspaceGranted) safeRoute = 'home';
+    if(['products', 'governance'].includes(safeRoute) && !adminWorkspaceGranted) safeRoute = 'home';
     document.querySelectorAll('.workspace-view.open').forEach(view => view.classList.remove('open'));
     const targetId = WORKSPACE_ROUTES[safeRoute];
     if(targetId && $(targetId)) {
@@ -97,7 +98,7 @@ function installWorkspaceShell() {
     if(main && !$('workspaceDate')) {
         main.insertAdjacentHTML('afterbegin', '<header class="workspace-topbar"><div><span class="workspace-kicker">OPERATIONS WORKSPACE</span><h1>Production overview</h1></div><div class="workspace-topbar-actions"><span id="workspaceDate" class="workspace-date"></span><button id="btnOpenInputFromTop" class="btn primary sm" type="button">+ Laporan shift</button></div></header>');
     }
-    const routes = { vLaporan:'reports', pDashboard:'monitoring', mRekap:'recap', mMaster:'products', mEntry:'input' };
+    const routes = { vLaporan:'reports', pDashboard:'monitoring', mRekap:'recap', mMaster:'products', mEntry:'input', mGovernance:'governance' };
     Object.entries(routes).forEach(([id, route]) => {
         if(!$(id)) return;
         $(id).classList.add('workspace-view');
@@ -915,6 +916,9 @@ function recalc(){
 
 
 async function saveEntry() {
+    if(typeof isGovernancePeriodLocked === 'function' && isGovernancePeriodLocked($('eTanggal')?.value)) {
+        return Swal.fire({ icon:'warning', title:'Periode Dikunci', text:'Laporan pada tanggal ini tidak dapat ditambah atau dikoreksi.', background:'#0F172A', color:'#F8FAFC' });
+    }
     openEntryRequiredAccordions();
     if(!client) return Swal.fire({icon:'error', title:'Error', text:'Database Belum Konek!', background:'#0F172A', color:'#F8FAFC'}); 
     
@@ -1055,6 +1059,7 @@ async function saveEntry() {
             confirmButtonColor: '#ef4444'
         });
     } else { 
+        if(typeof governanceAudit === 'function') governanceAudit($('eId').value ? 'update' : 'create', 'logs', payload.id, { tanggal: payload.tanggal, line: payload.line });
         const meta = statusMeta(p.targetStatus);
         blurActiveElementSafely();
 
@@ -1128,6 +1133,10 @@ async function saveMaster() {
 
 // 1. Hapus Satu Data Laporan (Log)
 window.deleteLog = (id) => {
+    const selectedLog = logs.find(row => String(row.id) === String(id));
+    if(selectedLog && typeof isGovernancePeriodLocked === 'function' && isGovernancePeriodLocked(selectedLog.tanggal)) {
+        return Swal.fire({ icon:'warning', title:'Periode Dikunci', text:'Laporan pada periode terkunci tidak dapat dihapus.', background:'#0F172A', color:'#F8FAFC' });
+    }
     Swal.fire({
         title: 'Hapus Data Ini?',
         text: "Data laporan yang dihapus tidak bisa kembali lho!",
