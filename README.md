@@ -8,6 +8,8 @@ Governance Center Fase 5 menyediakan alur approval laporan, penguncian periode, 
 
 Dashboard operasional kini mencakup trend target versus aktual, Pareto reject kumulatif 80/20, downtime Pareto, ranking line dengan drill-down, auto-refresh opsional, dan mode TV. Supabase Auth dan PIN admin tetap tidak diubah.
 
+Monitoring Room memakai tampilan bertahap: ringkasan periode tampil lebih dulu, sedangkan detail produk atau mesin dan analitik lanjutan hanya dimuat setelah pengguna membuat pilihan.
+
 ## Menjalankan aplikasi
 
 Gunakan static server agar perilakunya sama dengan deployment:

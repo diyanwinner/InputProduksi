@@ -4,6 +4,7 @@ let chartTrendInstance = null;
 let chartParetoInstance = null;
 let chartDowntimeInstance = null;
 let dashboardRefreshTimer = null;
+let dashboardFocusMode = 'line';
 
 function dashFmtInt(n) { return Math.round(+n || 0).toLocaleString('id-ID'); }
 function dashFmtPct(n) { return ((+n || 0).toFixed(1)) + '%'; }
@@ -15,6 +16,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const loadDash = document.getElementById('btnLoadDash');
     const autoRefresh = document.getElementById('dashAutoRefresh');
     const tvMode = document.getElementById('btnTvMode');
+    const focusApply = document.getElementById('btnApplyDashFocus');
+    const focusClear = document.getElementById('btnClearDashFocus');
 
     if(btnDash) {
         btnDash.onclick = () => {
@@ -35,7 +38,38 @@ document.addEventListener('DOMContentLoaded', () => {
         dashboardRefreshTimer = autoRefresh.checked ? setInterval(() => { if(document.body.dataset.route === 'monitoring') renderDashboard(); }, 60000) : null;
     };
     if(tvMode) tvMode.onclick = () => { document.getElementById('pDashboard')?.classList.toggle('tv-mode'); tvMode.textContent = document.getElementById('pDashboard')?.classList.contains('tv-mode') ? 'KELUAR TV' : 'MODE TV'; };
+    document.querySelectorAll('[data-focus-mode]').forEach(button => button.onclick = () => setDashboardFocusMode(button.dataset.focusMode));
+    if(focusApply) focusApply.onclick = renderDashboard;
+    if(focusClear) focusClear.onclick = clearDashboardFocus;
+    document.getElementById('dashAnalytics')?.addEventListener('toggle', event => { if(event.target.open) renderDashboard(); });
 });
+
+function setDashboardFocusMode(mode) {
+    dashboardFocusMode = mode === 'product' ? 'product' : 'line';
+    document.querySelectorAll('[data-focus-mode]').forEach(button => button.classList.toggle('active', button.dataset.focusMode === dashboardFocusMode));
+    document.getElementById('dashLineControl').hidden = dashboardFocusMode !== 'line';
+    document.getElementById('dashProductControl').hidden = dashboardFocusMode !== 'product';
+    document.getElementById('dashFocusedContent').hidden = true;
+    document.getElementById('dashFocusEmpty').hidden = false;
+}
+
+function clearDashboardFocus() {
+    document.getElementById('dFocusLine').value = '';
+    document.getElementById('dFocusProduct').value = '';
+    document.getElementById('dashFocusedContent').hidden = true;
+    document.getElementById('dashFocusEmpty').hidden = false;
+    document.getElementById('dashAnalytics').open = false;
+}
+
+function populateDashboardFocusOptions(rows) {
+    const lineSelect = document.getElementById('dFocusLine');
+    const currentLine = lineSelect.value;
+    const lines = [...new Set(rows.map(row => (row.line || '').trim()).filter(Boolean))].sort((a,b) => a.localeCompare(b, 'id', { numeric:true }));
+    lineSelect.innerHTML = '<option value="">Pilih mesin...</option>' + lines.map(line => `<option value="${escapeHtml(line)}">${escapeHtml(line)}</option>`).join('');
+    if(lines.includes(currentLine)) lineSelect.value = currentLine;
+    const products = new Map(); rows.forEach(row => { if(row.kode || row.nama) products.set(`${row.kode || ''}|${row.nama || ''}`, `${row.kode || '-'} — ${row.nama || '-'}`); });
+    document.getElementById('dashProductOptions').innerHTML = [...products.values()].sort().map(label => `<option value="${escapeHtml(label)}"></option>`).join('');
+}
 
 function renderDashboard() {
     // Cek data global dari app.js
@@ -46,21 +80,20 @@ function renderDashboard() {
 
     const startStr = document.getElementById('dFrom').value;
     const endStr = document.getElementById('dTo').value;
-    const lineFilter = document.getElementById('dLine').value.trim().toUpperCase();
     const shiftFilter = document.getElementById('dShift')?.value || '';
 
     // 1. FILTER DATA
     const sourceRows = typeof uniqueDashboardLogs === 'function' ? uniqueDashboardLogs(logs) : logs;
-    const dataDash = OperationalDashboard.filterRows(sourceRows, { from: startStr, to: endStr, line: lineFilter, shift: shiftFilter });
+    const periodData = OperationalDashboard.filterRows(sourceRows, { from: startStr, to: endStr, shift: shiftFilter });
 
-    if(dataDash.length === 0) {
+    if(periodData.length === 0) {
         alert("Tidak ada data produksi di periode/filter ini.");
         return;
     }
 
     // 2. HITUNG KPI CARD
     let totalHasil=0, totalOk=0, totalReject=0, sumYield=0;
-    dataDash.forEach(r => {
+    periodData.forEach(r => {
         totalHasil += (+r.hasil); 
         totalOk += (+r.okpcs); 
         totalReject += (+r.reject); 
@@ -70,19 +103,32 @@ function renderDashboard() {
     document.getElementById('kpiHasil').innerText = totalHasil.toLocaleString();
     document.getElementById('kpiOk').innerText = totalOk.toLocaleString();
     document.getElementById('kpiReject').innerText = totalReject.toLocaleString();
-    document.getElementById('kpiYield').innerText = (dataDash.length ? (sumYield / dataDash.length) : 0).toFixed(2) + "%";
+    document.getElementById('kpiYield').innerText = (periodData.length ? (sumYield / periodData.length) : 0).toFixed(2) + "%";
 
-    const targetRows = (typeof extractLogTarget === 'function') ? dataDash.map(r => ({ raw:r, tg: extractLogTarget(r) })).filter(x => x.tg.targetActual > 0) : [];
-    const targetBad = targetRows.filter(x => typeof isTargetUnsafe === 'function' ? isTargetUnsafe(x.tg.status) : x.tg.gapActual < 0);
-    const targetOk = targetRows.filter(x => typeof isTargetUnsafe === 'function' ? !isTargetUnsafe(x.tg.status) : x.tg.gapActual >= 0);
-    const gapActualTotal = targetRows.reduce((sum, x) => sum + x.tg.gapActual, 0);
-    const capacityLossTotal = targetRows.reduce((sum, x) => sum + (x.tg.capacityLossTotal || 0), 0);
+    const summaryTargets = (typeof extractLogTarget === 'function') ? periodData.map(r => ({ raw:r, tg: extractLogTarget(r) })).filter(x => x.tg.targetActual > 0) : [];
+    const targetBad = summaryTargets.filter(x => typeof isTargetUnsafe === 'function' ? isTargetUnsafe(x.tg.status) : x.tg.gapActual < 0);
+    const targetOk = summaryTargets.filter(x => typeof isTargetUnsafe === 'function' ? !isTargetUnsafe(x.tg.status) : x.tg.gapActual >= 0);
+    const gapActualTotal = summaryTargets.reduce((sum, x) => sum + x.tg.gapActual, 0);
+    const capacityLossTotal = summaryTargets.reduce((sum, x) => sum + (x.tg.capacityLossTotal || 0), 0);
     if(document.getElementById('kpiTargetBad')) document.getElementById('kpiTargetBad').innerText = targetBad.length.toLocaleString('id-ID');
     if(document.getElementById('kpiTargetOk')) document.getElementById('kpiTargetOk').innerText = targetOk.length.toLocaleString('id-ID');
     if(document.getElementById('kpiGapActual')) document.getElementById('kpiGapActual').innerText = dashFmtSigned(gapActualTotal);
     if(document.getElementById('kpiCapacityLoss')) document.getElementById('kpiCapacityLoss').innerText = dashFmtInt(capacityLossTotal);
 
+    populateDashboardFocusOptions(periodData);
+    const focusValue = dashboardFocusMode === 'line' ? document.getElementById('dFocusLine').value.trim() : document.getElementById('dFocusProduct').value.trim();
+    if(!focusValue) { clearDashboardFocus(); return; }
+    const productCode = focusValue.split(' — ')[0].trim();
+    const dataDash = periodData.filter(row => dashboardFocusMode === 'line'
+        ? String(row.line || '').toUpperCase() === focusValue.toUpperCase()
+        : String(row.kode || '').toUpperCase() === productCode.toUpperCase() || String(row.nama || '').toLowerCase().includes(focusValue.toLowerCase()));
+    if(!dataDash.length) { document.getElementById('dashFocusEmpty').textContent = 'Data pilihan tidak ditemukan pada periode ini.'; document.getElementById('dashFocusEmpty').hidden = false; document.getElementById('dashFocusedContent').hidden = true; return; }
+    document.getElementById('dashFocusEmpty').hidden = true;
+    document.getElementById('dashFocusedContent').hidden = false;
+    document.getElementById('opsSnapshotTitle').textContent = dashboardFocusMode === 'line' ? `Mesin ${focusValue}` : `Produk ${focusValue}`;
     renderOperationalSnapshot(dataDash, startStr, endStr, shiftFilter);
+    if(!document.getElementById('dashAnalytics').open) return;
+    const targetRows = dataDash.map(r => ({ raw:r, tg:extractLogTarget(r) })).filter(x => x.tg.targetActual > 0);
 
     // 3. CHART 1: TREND PRODUKSI
     const trend = OperationalDashboard.targetTrend(dataDash, extractLogTarget);
@@ -231,11 +277,9 @@ function renderOperationalSnapshot(data, start, end, shift) {
         const target = typeof extractLogTarget === 'function' ? extractLogTarget(row) : {};
         return { ...target, unsafe: typeof isTargetUnsafe === 'function' ? isTargetUnsafe(target.status) : (+target.gapActual || 0) < 0 };
     };
-    const latest = OperationalDashboard.latestShift(data);
-    const latestRows = latest ? data.filter(row => String(row.tanggal || '') === latest.tanggal && String(row.shift || '') === latest.shift) : [];
-    const snapshot = OperationalDashboard.buildSnapshot(latestRows, targetOf);
+    const snapshot = OperationalDashboard.buildSnapshot(data, targetOf);
     const periodBadge = document.getElementById('opsPeriodBadge');
-    if(periodBadge) periodBadge.textContent = latest ? `${latest.tanggal} · Shift ${latest.shift}` : `${start} — ${end}${shift ? ` · Shift ${shift}` : ''}`;
+    if(periodBadge) periodBadge.textContent = `${start} — ${end}${shift ? ` · Shift ${shift}` : ''}`;
 
     const grid = document.getElementById('opsLineGrid');
     if(grid) grid.innerHTML = snapshot.length ? snapshot.map(line => {
@@ -254,7 +298,7 @@ function renderOperationalSnapshot(data, start, end, shift) {
     if(queue) queue.innerHTML = critical.length ? critical.map((line, index) => `<div class="ops-action-item"><span>${index + 1}</span><div><b>${escapeHtml(line.line)} · Gap ${dashFmtSigned(line.gap)}</b><small>${escapeHtml(line.topReason)} · loss ${dashFmtInt(line.loss)} pcs</small></div></div>`).join('') : '<div class="ops-empty compact">Tidak ada line kritis.</div>';
 
     const reasonList = document.getElementById('opsReasonList');
-    const reasons = OperationalDashboard.reasonSummary(latestRows).slice(0, 5);
+    const reasons = OperationalDashboard.reasonSummary(data).slice(0, 5);
     const max = reasons[0]?.count || 1;
     if(reasonList) reasonList.innerHTML = reasons.length ? reasons.map(item => `<div class="ops-reason-item"><div><span>${escapeHtml(item.reason)}</span><b>${item.count}</b></div><i style="--reason-width:${item.count / max * 100}%"></i></div>`).join('') : '<div class="ops-empty compact">Belum ada alasan tercatat.</div>';
 }

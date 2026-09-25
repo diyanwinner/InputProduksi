@@ -18,12 +18,14 @@
 
     function filterRows(rows, filters = {}) {
         const line = normalizeLine(filters.line);
+        const product = text(filters.product).toLowerCase();
         return (rows || []).filter(row => {
             const date = text(row.tanggal);
             return (!filters.from || date >= filters.from)
                 && (!filters.to || date <= filters.to)
                 && (!filters.shift || text(row.shift) === text(filters.shift))
-                && (!line || normalizeLine(row.line).includes(line));
+                && (!line || normalizeLine(row.line).includes(line))
+                && (!product || text(row.kode).toLowerCase().includes(product) || text(row.nama).toLowerCase().includes(product));
         });
     }
 
