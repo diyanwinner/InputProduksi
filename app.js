@@ -1,6 +1,36 @@
+// Static-index fallback. Keep formulas aligned with production-core.js.
+const ProductionCore = globalThis.ProductionCore || (() => {
+    const STANDARD_SHIFT_HOURS = 8;
+    const toNumber = value => Number.isFinite(Number(value)) ? Number(value) : 0;
+    const clampEffectiveHours = (value, standard = 8) => Math.min(standard, Math.max(1, toNumber(value) || standard));
+    const targetShotPerHour = cycle => toNumber(cycle) > 0 ? Math.round(3600 / toNumber(cycle)) : 0;
+    const targetStatus = (okValue, standardValue, actualValue) => {
+        const ok = toNumber(okValue), actual = toNumber(actualValue), standard = toNumber(standardValue) > 0 ? toNumber(standardValue) : actual;
+        if(actual <= 0) return 'NO_TARGET';
+        if(ok >= standard * .97) return 'TARGET_STANDARD_TERCAPAI';
+        if(ok >= actual * .97) return 'TERCAPAI_AKTUAL_LOSS_CAPACITY';
+        return (ok / actual) * 100 >= 90 ? 'HAMPIR_TIDAK_TARGET' : 'TIDAK_TARGET';
+    };
+    const calculateProduction = input => {
+        const standardHours=toNumber(input.standardShiftHours)||8, effectiveHours=clampEffectiveHours(input.effectiveHours,standardHours), gram=toNumber(input.gram);
+        const standardCavity=Math.max(1,toNumber(input.standardCavity)), activeCavity=Math.min(Math.max(1,toNumber(input.activeCavity)),standardCavity), counter=toNumber(input.counter);
+        const factor=input.type==='kg_sisa'&&gram>0?1000/gram:1, beforePcs=toNumber(input.beforeRemainder)*factor, afterPcs=toNumber(input.afterRemainder)*factor;
+        const packedPcs=toNumber(input.packedPcs), okPcs=packedPcs-beforePcs+afterPcs, productionPcs=counter*activeCavity, resultPcs=productionPcs+beforePcs-afterPcs, rejectPcs=productionPcs-okPcs;
+        const okKg=okPcs*gram/1000, rejectKg=rejectPcs*gram/1000, runnerKg=counter*toNumber(input.runnerGram)/1000;
+        const remainingMaterialKg=toNumber(input.materialAllocation)+toNumber(input.materialStock)-runnerKg-rejectKg-okKg-toNumber(input.blockKg), yieldPct=resultPcs>0?okPcs/resultPcs*100:0;
+        const shotPerHour=targetShotPerHour(input.cycleTimeSec), targetHourStandard=shotPerHour*standardCavity, targetHourActual=shotPerHour*activeCavity, plannedStopHours=Math.max(0,standardHours-effectiveHours);
+        const targetStandardPcs=targetHourStandard*standardHours, targetActualPcs=targetHourActual*effectiveHours;
+        return {standardHours,effectiveHours,plannedStopHours,standardCavity,activeCavity,beforePcs,afterPcs,packedPcs,productionPcs,resultPcs,okPcs,rejectPcs,okKg,rejectKg,runnerKg,remainingMaterialKg,yieldPct,shotPerHour,targetHourStandard,targetHourActual,targetStandardPcs,targetActualPcs,achievementStandardPct:targetStandardPcs>0?okPcs/targetStandardPcs*100:0,achievementActualPct:targetActualPcs>0?okPcs/targetActualPcs*100:0,gapStandardPcs:targetStandardPcs>0?okPcs-targetStandardPcs:0,gapActualPcs:targetActualPcs>0?okPcs-targetActualPcs:0,timeLossPcs:Math.max(0,targetHourStandard*plannedStopHours),cavityLossPcs:Math.max(0,shotPerHour*(standardCavity-activeCavity)*effectiveHours),capacityLossTotalPcs:Math.max(0,targetStandardPcs-targetActualPcs),status:targetStatus(okPcs,targetStandardPcs,targetActualPcs),overpack:packedPcs>resultPcs};
+    };
+    return {STANDARD_SHIFT_HOURS,toNumber,clampEffectiveHours,targetShotPerHour,targetStatus,calculateProduction};
+})();
+
 // --- HELPER FUNCTIONS ---
 const $ = id => document.getElementById(id);
-const toNum = v => isNaN(+v) ? 0 : +v;
+const toNum = ProductionCore.toNumber;
+const escapeHtml = value => String(value ?? '').replace(/[&<>'"]/g, char => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+}[char]));
 const uid = () => Math.random().toString(36).slice(2);
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
@@ -11,10 +41,8 @@ let master = [];
 let _rekapLogs = [];
 
 // TARGET CONTROL SETTINGS
-const STANDARD_SHIFT_HOURS = 8;
+const STANDARD_SHIFT_HOURS = ProductionCore.STANDARD_SHIFT_HOURS;
 const SHIFT_HOURS = STANDARD_SHIFT_HOURS; // kompatibilitas data lama
-const TARGET_TOLERANCE_PCT = 97; // Spare 3%: actual >= 97% dari target aktual dianggap masih aman.
-const TARGET_CRITICAL_PCT = 90;  // Di bawah 90% masuk merah besar.
 const TARGET_STATUS = {
     NO_TARGET: { label: 'Target belum aktif', cls: 'neutral', icon: '•' },
     TARGET_STANDARD_TERCAPAI: { label: 'Target Tercapai', cls: 'ok', icon: '•' },
@@ -29,6 +57,174 @@ const fmtSigned = n => { const x = Math.round(+n || 0); return (x > 0 ? '+' : ''
 const normLine = v => (v || '').toString().trim().toUpperCase();
 const ymd = d => d.toISOString().slice(0, 10);
 
+const WORKSPACE_ROUTES = {
+    home: null,
+    input: 'mEntry',
+    monitoring: 'pDashboard',
+    reports: 'vLaporan',
+    recap: 'mRekap',
+    products: 'mMaster'
+};
+let adminWorkspaceGranted = false;
+
+function setActiveNavigation(route) {
+    const desktopMap = { input:'btnAdd', monitoring:'btnDashboard', reports:'btnOpenLog', recap:'btnRekap', products:'btnMaster' };
+    document.querySelectorAll('.side-nav-item').forEach(item => item.classList.remove('active'));
+    if($(desktopMap[route])) $(desktopMap[route]).classList.add('active');
+    document.querySelectorAll('[data-mobile-route]').forEach(item => item.classList.toggle('active', item.dataset.mobileRoute === route));
+}
+
+function openWorkspace(route = 'home', updateHash = true) {
+    let safeRoute = Object.hasOwn(WORKSPACE_ROUTES, route) ? route : 'home';
+    if(safeRoute === 'products' && !adminWorkspaceGranted) safeRoute = 'home';
+    document.querySelectorAll('.workspace-view.open').forEach(view => view.classList.remove('open'));
+    const targetId = WORKSPACE_ROUTES[safeRoute];
+    if(targetId && $(targetId)) {
+        $(targetId).classList.add('open');
+        $(targetId).scrollTop = 0;
+    }
+    document.body.dataset.route = safeRoute;
+    setActiveNavigation(safeRoute);
+    if(updateHash) history.pushState({ route: safeRoute }, '', safeRoute === 'home' ? '#/' : `#/${safeRoute}`);
+}
+
+function currentHashRoute() {
+    return location.hash.replace(/^#\/?/, '') || 'home';
+}
+
+function installWorkspaceShell() {
+    const main = document.querySelector('.erp-main');
+    if(main && !$('workspaceDate')) {
+        main.insertAdjacentHTML('afterbegin', '<header class="workspace-topbar"><div><span class="workspace-kicker">OPERATIONS WORKSPACE</span><h1>Production overview</h1></div><div class="workspace-topbar-actions"><span id="workspaceDate" class="workspace-date"></span><button id="btnOpenInputFromTop" class="btn primary sm" type="button">+ Laporan shift</button></div></header>');
+    }
+    const routes = { vLaporan:'reports', pDashboard:'monitoring', mRekap:'recap', mMaster:'products', mEntry:'input' };
+    Object.entries(routes).forEach(([id, route]) => {
+        if(!$(id)) return;
+        $(id).classList.add('workspace-view');
+        $(id).dataset.route = route;
+    });
+    if(!document.querySelector('.mobile-dock')) {
+        document.body.insertAdjacentHTML('beforeend', '<nav class="mobile-dock" aria-label="Navigasi cepat"><button type="button" data-mobile-route="home"><span>⌂</span><small>Beranda</small></button><button type="button" data-mobile-route="input"><span>＋</span><small>Input</small></button><button type="button" data-mobile-route="monitoring"><span>◫</span><small>Monitor</small></button><button type="button" data-mobile-route="reports"><span>≡</span><small>Data</small></button><button type="button" data-mobile-route="recap"><span>∑</span><small>Rekap</small></button></nav>');
+    }
+}
+
+const ENTRY_DRAFT_KEY = 'prod_entry_draft_v1';
+let entryDraftTimer = null;
+
+function entryDraftFields() {
+    return [...document.querySelectorAll('#mEntry input[id], #mEntry select[id]')]
+        .filter(field => field.type !== 'hidden' && !field.readOnly);
+}
+
+function setDraftStatus(message) {
+    if($('entryDraftStatus')) $('entryDraftStatus').textContent = message;
+}
+
+function saveEntryDraft() {
+    if(!$('mEntry')?.classList.contains('open') || $('eId')?.value) return;
+    const values = {};
+    entryDraftFields().forEach(field => { values[field.id] = field.value; });
+    localStorage.setItem(ENTRY_DRAFT_KEY, JSON.stringify({ savedAt:Date.now(), values }));
+    setDraftStatus(`Draft ${new Date().toLocaleTimeString('id-ID', { hour:'2-digit', minute:'2-digit' })}`);
+}
+
+function clearEntryDraft() {
+    localStorage.removeItem(ENTRY_DRAFT_KEY);
+    setDraftStatus('Belum ada draft');
+}
+
+function readEntryDraft() {
+    try {
+        const draft = JSON.parse(localStorage.getItem(ENTRY_DRAFT_KEY) || 'null');
+        if(!draft?.values || Date.now() - draft.savedAt > 72 * 60 * 60 * 1000) return null;
+        return draft;
+    } catch(e) {
+        return null;
+    }
+}
+
+async function offerEntryDraftRestore() {
+    const draft = readEntryDraft();
+    if(!draft) return;
+    const result = await Swal.fire({
+        icon:'info', title:'Lanjutkan draft terakhir?',
+        text:`Draft tersimpan ${new Date(draft.savedAt).toLocaleString('id-ID')}.`,
+        confirmButtonText:'Lanjutkan Draft', showDenyButton:true, denyButtonText:'Buang Draft',
+        background:'#0F172A', color:'#F8FAFC', confirmButtonColor:'#6366F1', denyButtonColor:'#475569'
+    });
+    if(result.isDenied) { clearEntryDraft(); return; }
+    if(!result.isConfirmed) return;
+    Object.entries(draft.values).forEach(([id, value]) => { if($(id)) $(id).value = value; });
+    hydrateProduk();
+    Object.entries(draft.values).forEach(([id, value]) => { if($(id) && !$(id).readOnly) $(id).value = value; });
+    recalc();
+    setDraftStatus('Draft dipulihkan');
+}
+
+function updateEntryProgress(activePanel) {
+    const panels = [...document.querySelectorAll('#mEntry .entry-flow > details')];
+    document.querySelectorAll('.entry-step-button').forEach((button, index) => {
+        const panel = panels[index], required = panel ? [...panel.querySelectorAll('input:not([readonly]):not([type="hidden"]), select')].filter(field => field.offsetParent !== null) : [];
+        const complete = required.length > 0 && required.some(field => String(field.value || '').trim() !== '');
+        button.classList.toggle('complete', complete);
+        button.classList.toggle('active', panel === activePanel);
+    });
+    panels.forEach(panel => panel.classList.toggle('workflow-current', panel === activePanel));
+}
+
+function setupEntryWorkflow() {
+    const flow = document.querySelector('#mEntry .entry-flow');
+    if(!flow || document.querySelector('.entry-progress')) return;
+    const panels = [...flow.children].filter(node => node.matches('details'));
+    const labels = ['Shift', 'Produk', 'Produksi', 'Material', 'Packing', 'Reject'];
+    const progress = document.createElement('div');
+    progress.className = 'entry-progress';
+    progress.innerHTML = `<div class="entry-progress-steps">${panels.map((_, index) => `<button type="button" class="entry-step-button" data-entry-step="${index}"><b>${index + 1}</b><span>${labels[index] || `Langkah ${index + 1}`}</span></button>`).join('')}</div><div class="draft-tools"><span id="entryDraftStatus" class="draft-status">Draft otomatis aktif</span><button id="btnClearEntryDraft" class="draft-clear" type="button">Hapus draft</button></div>`;
+    flow.before(progress);
+    progress.querySelectorAll('[data-entry-step]').forEach(button => button.addEventListener('click', () => {
+        const panel = panels[Number(button.dataset.entryStep)];
+        if(!panel) return;
+        panel.open = true;
+        updateEntryProgress(panel);
+        panel.scrollIntoView({ behavior:'smooth', block:'start' });
+    }));
+    $('btnClearEntryDraft').addEventListener('click', clearEntryDraft);
+    entryDraftFields().forEach(field => {
+        const handleChange = () => {
+            clearTimeout(entryDraftTimer);
+            setDraftStatus('Menyimpan…');
+            entryDraftTimer = setTimeout(saveEntryDraft, 350);
+            updateEntryProgress(field.closest('details'));
+        };
+        field.addEventListener('input', handleChange);
+        field.addEventListener('change', handleChange);
+        field.addEventListener('focus', () => updateEntryProgress(field.closest('details')));
+    });
+    updateEntryProgress(panels[0]);
+}
+
+async function confirmEntryReview(p) {
+    const duplicate = logs.find(row => row.id !== $('eId').value && row.tanggal === $('eTanggal').value && String(row.shift) === String($('eShift').value) && normLine(row.line) === normLine($('eLine').value) && row.kode === p.prod?.kode);
+    if(duplicate) {
+        const duplicateResult = await Swal.fire({
+            icon:'warning', title:'Laporan serupa sudah ada',
+            html:`Data <b>${escapeHtml(p.prod.kode)}</b> untuk line <b>${escapeHtml(normLine($('eLine').value))}</b>, shift ${escapeHtml($('eShift').value)} sudah tersimpan.`,
+            showCancelButton:true, confirmButtonText:'Tetap Simpan', cancelButtonText:'Periksa Data',
+            background:'#0F172A', color:'#F8FAFC', confirmButtonColor:'#d97706'
+        });
+        if(!duplicateResult.isConfirmed) return false;
+    }
+    const meta = statusMeta(p.targetStatus);
+    const review = await Swal.fire({
+        title:'Periksa sebelum simpan',
+        html:`<div style="text-align:left;line-height:1.8"><b>${escapeHtml($('eTanggal').value)} · Shift ${escapeHtml($('eShift').value)} · Line ${escapeHtml(normLine($('eLine').value))}</b><br>${escapeHtml(p.prod.kode)} — ${escapeHtml(p.prod.nama)}<hr style="border-color:#334155"><b>OK:</b> ${fmtInt(p.okpcs)} pcs &nbsp; <b>Reject:</b> ${fmtInt(p.rejectpcs)} pcs<br><b>Target:</b> ${fmtInt(p.targetActualPcs)} pcs &nbsp; <b>Status:</b> ${escapeHtml(meta.label)}</div>`,
+        icon:isTargetUnsafe(p.targetStatus)?'warning':'question', showCancelButton:true,
+        confirmButtonText:'Ya, Simpan', cancelButtonText:'Kembali Periksa',
+        background:'#0F172A', color:'#F8FAFC', confirmButtonColor:'#6366F1'
+    });
+    return review.isConfirmed;
+}
+
 function getProductCycleTime(prod) {
     if(!prod) return 0;
     return toNum(prod.cycle_time_sec ?? prod.cycle_time ?? prod.ct ?? prod.time_cycle ?? prod.cycletime);
@@ -39,12 +235,12 @@ function getProductStdCavity(prod) {
 }
 
 function getTargetShotHour(cycleTimeSec) {
-    return cycleTimeSec > 0 ? Math.round(3600 / cycleTimeSec) : 0;
+    return ProductionCore.targetShotPerHour(cycleTimeSec);
 }
 
 function getSelectedEffectiveHours() {
     const raw = toNum($('eEffectiveHours')?.value) || STANDARD_SHIFT_HOURS;
-    return Math.min(STANDARD_SHIFT_HOURS, Math.max(1, raw));
+    return ProductionCore.clampEffectiveHours(raw, STANDARD_SHIFT_HOURS);
 }
 
 function uniqueDashboardLogs(rows) {
@@ -59,16 +255,7 @@ function uniqueDashboardLogs(rows) {
 }
 
 function makeTargetStatus(okpcs, targetStandard, targetActual) {
-    if(!targetActual || targetActual <= 0) return 'NO_TARGET';
-    const safeStandard = targetStandard > 0 ? targetStandard : targetActual;
-    const achActual = targetActual > 0 ? (okpcs / targetActual) * 100 : 0;
-    const okAgainstStandard = okpcs >= (safeStandard * (TARGET_TOLERANCE_PCT / 100));
-    const okAgainstActual = okpcs >= (targetActual * (TARGET_TOLERANCE_PCT / 100));
-
-    if(okAgainstStandard) return 'TARGET_STANDARD_TERCAPAI';
-    if(okAgainstActual) return 'TERCAPAI_AKTUAL_LOSS_CAPACITY';
-    if(achActual >= TARGET_CRITICAL_PCT) return 'HAMPIR_TIDAK_TARGET';
-    return 'TIDAK_TARGET';
+    return ProductionCore.targetStatus(okpcs, targetStandard, targetActual);
 }
 
 function isTargetUnsafe(status) {
@@ -183,23 +370,26 @@ function extractLogTarget(r) {
 const ADMIN_PIN = "1234"; 
 
 document.addEventListener('DOMContentLoaded', () => {
+    installWorkspaceShell();
+    setupEntryWorkflow();
     // --- ACTIONS (MENU UTAMA) ---
-    $('btnAdd').onclick = () => { $('mEntry').classList.add('open'); resetEntryForm(); scrollEntryFormToTop('auto'); };
-    if($('btnOpenInputFromAlert')) $('btnOpenInputFromAlert').onclick = () => { $('mEntry').classList.add('open'); resetEntryForm(); scrollEntryFormToTop('auto'); };
-    if($('btnOpenInputFromTop')) $('btnOpenInputFromTop').onclick = () => { $('mEntry').classList.add('open'); resetEntryForm(); scrollEntryFormToTop('auto'); };
+    const openFreshEntry = async () => { openWorkspace('input'); resetEntryForm(); scrollEntryFormToTop('auto'); await offerEntryDraftRestore(); };
+    $('btnAdd').onclick = openFreshEntry;
+    if($('btnOpenInputFromAlert')) $('btnOpenInputFromAlert').onclick = openFreshEntry;
+    if($('btnOpenInputFromTop')) $('btnOpenInputFromTop').onclick = openFreshEntry;
     $('btnRekap').onclick = fetchAndShowRekap;
-    $('btnOpenLog').onclick = () => { $('vLaporan').classList.add('open'); renderTable(); };
+    $('btnOpenLog').onclick = () => { openWorkspace('reports'); renderTable(); };
 
     // --- PROTECTED MENUS (BUTUH PIN) ---
     $('btnConfig').onclick = () => checkAdmin(() => $('mConfig').classList.add('open'));
-    $('btnMaster').onclick = () => checkAdmin(() => $('mMaster').classList.add('open'));
+    $('btnMaster').onclick = () => checkAdmin(() => { adminWorkspaceGranted = true; openWorkspace('products'); });
 
     // --- CLOSERS ---
-    $('vLaporanClose').onclick = () => $('vLaporan').classList.remove('open');
+    $('vLaporanClose').onclick = () => openWorkspace('home');
     $('mConfigClose').onclick = () => $('mConfig').classList.remove('open');
-    $('mEntryClose').onclick = () => $('mEntry').classList.remove('open');
-    $('mMasterClose').onclick = () => $('mMaster').classList.remove('open');
-    $('mRekapClose').onclick = () => $('mRekap').classList.remove('open');
+    $('mEntryClose').onclick = () => openWorkspace('home');
+    $('mMasterClose').onclick = () => openWorkspace('home');
+    $('mRekapClose').onclick = () => openWorkspace('home');
 
     // --- CORE ---
     $('btnSaveConfig').onclick = saveConfig;
@@ -250,6 +440,18 @@ document.addEventListener('DOMContentLoaded', () => {
     setupExcelNavigation();
     setupQuickInputMode();
     initLineFocus();
+
+    if($('workspaceDate')) $('workspaceDate').textContent = new Intl.DateTimeFormat('id-ID', { weekday:'long', day:'numeric', month:'long', year:'numeric' }).format(new Date());
+    document.querySelectorAll('[data-mobile-route]').forEach(button => button.addEventListener('click', () => {
+        const route = button.dataset.mobileRoute;
+        if(route === 'input') openFreshEntry();
+        else if(route === 'monitoring') $('btnDashboard').click();
+        else if(route === 'recap') fetchAndShowRekap();
+        else if(route === 'reports') { openWorkspace('reports'); renderTable(); }
+        else openWorkspace('home');
+    }));
+    window.addEventListener('popstate', () => openWorkspace(currentHashRoute(), false));
+    openWorkspace(currentHashRoute(), false);
 
     const sUrl = localStorage.getItem('prod_sb_url');
     const sKey = localStorage.getItem('prod_sb_key');
@@ -393,11 +595,11 @@ function renderTable() {
         const meta = statusMeta(tg.status);
         const tr = document.createElement('tr');
         tr.innerHTML = `
-            <td>${r.tanggal || '-'}</td>
-            <td>${r.shift || '-'}</td>
-            <td>${r.line || '-'}</td>
-            <td><b>${r.nama || '-'}</b><br><small>${r.kode || '-'}</small></td>
-            <td>${r.tipe || '-'}</td>
+            <td>${escapeHtml(r.tanggal || '-')}</td>
+            <td>${escapeHtml(r.shift || '-')}</td>
+            <td>${escapeHtml(r.line || '-')}</td>
+            <td><b>${escapeHtml(r.nama || '-')}</b><br><small>${escapeHtml(r.kode || '-')}</small></td>
+            <td>${escapeHtml(r.tipe || '-')}</td>
             <td class="right">${(+r.counter || 0).toLocaleString('id-ID')}</td>
             <td class="right">${(+tg.cavityActive || +r.cavity || 0)}</td>
             <td class="right">${tg.effectiveHours || STANDARD_SHIFT_HOURS} jam</td>
@@ -409,10 +611,12 @@ function renderTable() {
             <td class="right text-danger">${(+r.reject || 0).toLocaleString('id-ID')}</td>
             <td class="right"><b>${(+r.yieldpct || 0).toFixed(2)}%</b></td>
             <td style="text-align:center; white-space:nowrap;">
-                <button class="btn sm info" onclick="editLog('${r.id}')">✎</button> 
-                <button class="btn sm danger" onclick="deleteLog('${r.id}')">🗑</button>
+                <button class="btn sm info" data-action="edit">✎</button>
+                <button class="btn sm danger" data-action="delete">🗑</button>
             </td>
         `;
+        tr.querySelector('[data-action="edit"]').addEventListener('click', () => window.editLog(r.id));
+        tr.querySelector('[data-action="delete"]').addEventListener('click', () => window.deleteLog(r.id));
         t.appendChild(tr);
     });
 }
@@ -420,16 +624,16 @@ function renderTable() {
 function makeAlertItem(r, opts = {}) {
     const tg = extractLogTarget(r);
     const meta = statusMeta(tg.status);
-    const title = `${r.line || '-'} · Shift ${r.shift || '-'} · ${r.kode || ''}`;
-    const subtitle = r.nama || '-';
+    const title = escapeHtml(`${r.line || '-'} · Shift ${r.shift || '-'} · ${r.kode || ''}`);
+    const subtitle = escapeHtml(r.nama || '-');
     const reasonParts = [];
     if(r.under_target_reason) reasonParts.push(`Target: ${r.under_target_reason}`);
     if(r.planned_stop_reason) reasonParts.push(`Stop: ${r.planned_stop_reason}`);
     if(r.cavity_adjust_reason) reasonParts.push(`Cavity: ${r.cavity_adjust_reason}`);
     if(!reasonParts.length && r.catatan) reasonParts.push(r.catatan);
-    const reason = reasonParts.length ? reasonParts.join(' | ') : '-';
+    const reason = escapeHtml(reasonParts.length ? reasonParts.join(' | ') : '-');
     const capParts = [];
-    if(tg.effectiveHours < tg.standardShiftHours) capParts.push(`Jam ${tg.effectiveHours}/${tg.standardShiftHours} (${tg.plannedStopHours} jam stop${tg.stopReason ? ': ' + tg.stopReason : ''})`);
+    if(tg.effectiveHours < tg.standardShiftHours) capParts.push(`Jam ${tg.effectiveHours}/${tg.standardShiftHours} (${tg.plannedStopHours} jam stop${tg.stopReason ? ': ' + escapeHtml(tg.stopReason) : ''})`);
     if(tg.cavityActive < tg.cavityStd) capParts.push(`Cav ${tg.cavityStd} → ${tg.cavityActive}`);
     const lossLine = (opts.showLoss || capParts.length) ? `<div class="alert-item-note">Kapasitas turun: <b>${fmtInt(tg.capacityLossTotal || tg.loss || tg.timeLoss)}</b> pcs${capParts.length ? ' | ' + capParts.join(' | ') : ''}</div>` : '';
     return `
@@ -498,7 +702,7 @@ function renderLineFocus() {
     if (!content) return;
 
     if (!filtered.length) {
-        content.innerHTML = `<div class="lf-empty">Tidak ada data untuk line <b>${lineRaw.toUpperCase()}</b> di periode ini.</div>`;
+        content.innerHTML = `<div class="lf-empty">Tidak ada data untuk line <b>${escapeHtml(lineRaw.toUpperCase())}</b> di periode ini.</div>`;
         content.style.display = 'block';
         if (btnReset) btnReset.style.display = 'inline-flex';
         return;
@@ -564,8 +768,8 @@ function renderLineFocus() {
         <div class="lf-prod-card ${cardCls}">
             <div class="lf-prod-head">
                 <div>
-                    <div class="lf-prod-kode">${prod.kode || '-'}</div>
-                    <div class="lf-prod-nama">${prod.nama || '-'}</div>
+                    <div class="lf-prod-kode">${escapeHtml(prod.kode || '-')}</div>
+                    <div class="lf-prod-nama">${escapeHtml(prod.nama || '-')}</div>
                 </div>
                 <div class="lf-prod-ach" style="color:${achColor}">${avgAch !== null ? avgAch.toFixed(1)+'%' : '-'}</div>
             </div>
@@ -577,13 +781,13 @@ function renderLineFocus() {
                 ${capLoss > 0 ? `<div class="lf-pstat"><span class="lf-loss-val">${fmtInt(capLoss)}</span><small>Loss Cap</small></div>` : ''}
             </div>
             ${topRej.length ? `<div class="lf-reject-pills">${topRej.map(([k,v]) => `<span class="lf-reject-pill">${k.toUpperCase()} <b>${fmtInt(v)}</b></span>`).join('')}</div>` : ''}
-            ${issues.size  ? `<div class="lf-issues">${[...issues].slice(0,3).map(i=>`<div class="lf-issue-item">⚠ ${i}</div>`).join('')}</div>` : ''}
+            ${issues.size  ? `<div class="lf-issues">${[...issues].slice(0,3).map(i=>`<div class="lf-issue-item">⚠ ${escapeHtml(i)}</div>`).join('')}</div>` : ''}
         </div>`;
     }).join('');
 
     content.innerHTML = `
         <div class="lf-summary">
-            <div class="lf-summary-title">Line <b>${lineRaw.toUpperCase()}</b> · ${fromVal} s/d ${toVal} · ${prods.length} produk, ${totalShifts} shift</div>
+            <div class="lf-summary-title">Line <b>${escapeHtml(lineRaw.toUpperCase())}</b> · ${escapeHtml(fromVal)} s/d ${escapeHtml(toVal)} · ${prods.length} produk, ${totalShifts} shift</div>
             <div class="lf-summary-kpis">
                 <div class="lf-skpi"><span class="lf-skpi-v">${fmtInt(totalOk)}</span><span class="lf-skpi-l">Total OK</span></div>
                 <div class="lf-skpi danger"><span class="lf-skpi-v">${fmtInt(totalReject)}</span><span class="lf-skpi-l">Total Reject</span></div>
@@ -706,7 +910,22 @@ function autoFillProductByLine() {
 
 function setupCustomSearch() {
     const inp = $('eProduk'), lst = $('produkSuggestions');
-    inp.oninput = function() { const v = this.value.toLowerCase(); if(!v) { lst.style.display='none'; return; } const m = master.filter(p=>p.kode.toLowerCase().includes(v)||p.nama.toLowerCase().includes(v)); lst.innerHTML = m.length ? m.map(p=>{ const val = (p.kode + ' - ' + p.nama).replace(/\\/g,'\\\\').replace(/'/g,"\\'"); return `<div class="search-item" onclick="selectProduk('${val}')"><span>${p.kode}</span> - ${p.nama}</div>`; }).join('') : ''; lst.style.display = m.length?'block':'none'; };
+    inp.oninput = function() {
+        const v = this.value.toLowerCase();
+        lst.replaceChildren();
+        if(!v) { lst.style.display='none'; return; }
+        const matches = master.filter(p=>(p.kode || '').toLowerCase().includes(v)||(p.nama || '').toLowerCase().includes(v));
+        matches.forEach(p => {
+            const item = document.createElement('div');
+            item.className = 'search-item';
+            const code = document.createElement('span');
+            code.textContent = p.kode || '';
+            item.append(code, document.createTextNode(` - ${p.nama || ''}`));
+            item.addEventListener('click', () => window.selectProduk(`${p.kode || ''} - ${p.nama || ''}`));
+            lst.appendChild(item);
+        });
+        lst.style.display = matches.length ? 'block' : 'none';
+    };
     document.addEventListener('click', e=>{ if(e.target!==inp && e.target!==lst) lst.style.display='none'; });
 }
 
@@ -745,39 +964,25 @@ function compute(){
     const activeCav = Math.min(cav, stdCav || cav);
     
     let sblm=sum(['eSblm1','eSblm2','eSblm3','eSblm4','eSblm5','eSblm6']), ssdh=sum(['eSsdh1','eSsdh2','eSsdh3','eSsdh4','eSsdh5','eSsdh6']);
-    let sblm_pcs=sblm, ssdh_pcs=ssdh; if(tipe==='kg_sisa'){ const c=gram>0?(1000/gram):0; sblm_pcs=sblm*c; ssdh_pcs=ssdh*c; }
-    
     const qD=toNum($('eQtyDus').value), iD=toNum($('eIsiDus').value), qB=toNum($('eQtyBox').value), iB=toNum($('eIsiBox').value), qDp=toNum($('eQtyDusPlus').value), iDp=toNum($('eIsiDusPlus').value);
-    const packpcs=(qD*iD)+(qB*iB)+(qDp*iDp), okpcs=packpcs-sblm_pcs+ssdh_pcs, produksi=counter*activeCav, hasil=produksi+sblm_pcs-ssdh_pcs, rejectpcs=produksi-okpcs;
-    
-    const okkg=(okpcs*gram)/1000, rejectkg=(rejectpcs*gram)/1000, runnerkg=(counter*toNum($('eRunner').value))/1000;
+    const packpcs=(qD*iD)+(qB*iB)+(qDp*iDp);
     const jatah=toNum($('eJatah').value), stok=toNum($('eStok').value), balok=toNum($('eBalokan').value);
-    const sisaBahan=(jatah+stok)-(runnerkg+rejectkg+okkg+balok), yieldpct=hasil>0?(okpcs/hasil)*100:0, overpack=packpcs>hasil;
-    
-    const targetShotHour = getTargetShotHour(cycleTimeSec);
-    const targetHourStandard = targetShotHour * stdCav;
-    const targetHourActual = targetShotHour * activeCav;
-    const effectiveHours = getSelectedEffectiveHours();
-    const plannedStopHours = Math.max(0, STANDARD_SHIFT_HOURS - effectiveHours);
-    const targetStandardPcs = targetHourStandard * STANDARD_SHIFT_HOURS;
-    const targetActualPcs = targetHourActual * effectiveHours;
-    const achievementStandardPct = targetStandardPcs > 0 ? (okpcs / targetStandardPcs) * 100 : 0;
-    const achievementActualPct = targetActualPcs > 0 ? (okpcs / targetActualPcs) * 100 : 0;
-    const gapStandardPcs = targetStandardPcs > 0 ? okpcs - targetStandardPcs : 0;
-    const gapActualPcs = targetActualPcs > 0 ? okpcs - targetActualPcs : 0;
-    const timeLossPcs = Math.max(0, targetHourStandard * plannedStopHours);
-    const cavityLossPcs = Math.max(0, targetShotHour * Math.max(0, stdCav - activeCav) * effectiveHours);
-    const capacityLossTotalPcs = Math.max(0, targetStandardPcs - targetActualPcs);
-    const targetStatus = makeTargetStatus(okpcs, targetStandardPcs, targetActualPcs);
+    const calc = ProductionCore.calculateProduction({
+        gram, runnerGram: toNum($('eRunner').value), standardCavity: stdCav,
+        activeCavity: activeCav, counter, beforeRemainder: sblm, afterRemainder: ssdh,
+        packedPcs: packpcs, materialAllocation: jatah, materialStock: stok, blockKg: balok,
+        cycleTimeSec, effectiveHours: getSelectedEffectiveHours(),
+        standardShiftHours: STANDARD_SHIFT_HOURS, type: tipe
+    });
     
     const rIds=['rUneven','rMottled','rStartup','rShort','rFlow','rFlash','rCrack','rSpot','rScratch','rDirty'];
     const rValues = rIds.map(i=>toNum($(i).value));
     
     return { 
-        prod, tipe, gram, cav: activeCav, stdCav, cycleTimeSec, targetShotHour, targetHourStandard, targetHourActual,
-        standardShiftHours: STANDARD_SHIFT_HOURS, effectiveHours, plannedStopHours, targetStandardPcs, targetActualPcs, achievementStandardPct, achievementActualPct, gapStandardPcs, gapActualPcs, timeLossPcs, cavityLossPcs, capacityLossTotalPcs, targetStatus,
-        counter, sblm_pcs, ssdh_pcs, hasil, okpcs, okkg, 
-        rejectpcs, rejectkg, runnerkg, yieldpct, sisaBahan, overpack, packpcs, 
+        prod, tipe, gram, cav: calc.activeCavity, stdCav, cycleTimeSec, targetShotHour: calc.shotPerHour, targetHourStandard: calc.targetHourStandard, targetHourActual: calc.targetHourActual,
+        standardShiftHours: calc.standardHours, effectiveHours: calc.effectiveHours, plannedStopHours: calc.plannedStopHours, targetStandardPcs: calc.targetStandardPcs, targetActualPcs: calc.targetActualPcs, achievementStandardPct: calc.achievementStandardPct, achievementActualPct: calc.achievementActualPct, gapStandardPcs: calc.gapStandardPcs, gapActualPcs: calc.gapActualPcs, timeLossPcs: calc.timeLossPcs, cavityLossPcs: calc.cavityLossPcs, capacityLossTotalPcs: calc.capacityLossTotalPcs, targetStatus: calc.status,
+        counter, sblm_pcs: calc.beforePcs, ssdh_pcs: calc.afterPcs, hasil: calc.resultPcs, okpcs: calc.okPcs, okkg: calc.okKg,
+        rejectpcs: calc.rejectPcs, rejectkg: calc.rejectKg, runnerkg: calc.runnerKg, yieldpct: calc.yieldPct, sisaBahan: calc.remainingMaterialKg, overpack: calc.overpack, packpcs: calc.packedPcs,
         rtotal:sum(rIds), rmax:Math.max(...rValues), 
         details:{ sblm:[1,2,3,4,5,6].map(i=>toNum($('eSblm'+i).value)), ssdh:[1,2,3,4,5,6].map(i=>toNum($('eSsdh'+i).value)) } 
     };
@@ -881,6 +1086,8 @@ async function saveEntry() {
         });
         if(!confirmNoTarget.isConfirmed) return;
     }
+
+    if(!await confirmEntryReview(p)) return;
 
     $('loading').style.display = 'flex';
     
@@ -988,6 +1195,7 @@ async function saveEntry() {
             returnFocus: false
         });
 
+        clearEntryDraft();
         resetEntryForm();
         blurActiveElementSafely();
         refreshData(false);
@@ -1203,7 +1411,7 @@ window.editLog=(id)=>{
     $('eQtyDus').value=r.qty_dus||''; $('eIsiDus').value=r.isi_dus||''; $('eQtyBox').value=r.qty_box||''; $('eIsiBox').value=r.isi_box||''; $('eQtyDusPlus').value=r.qty_dus_plus||''; $('eIsiDusPlus').value=r.isi_dus_plus||'';
     $('rUneven').value=r.reject_uneven||''; $('rMottled').value=r.reject_mottled||''; $('rStartup').value=r.reject_startup||''; $('rShort').value=r.reject_short||''; $('rFlow').value=r.reject_flow||''; $('rFlash').value=r.reject_flashing||''; $('rCrack').value=r.reject_crack||''; $('rSpot').value=r.reject_spot||''; $('rScratch').value=r.reject_scratch||''; $('rDirty').value=r.reject_dirty||'';
     if(r.detail_sisa){ const d=(typeof r.detail_sisa==='string')?JSON.parse(r.detail_sisa):r.detail_sisa; if(d.sblm)d.sblm.forEach((v,i)=>{if($('eSblm'+(i+1)))$('eSblm'+(i+1)).value=v===0?'':v}); if(d.ssdh)d.ssdh.forEach((v,i)=>{if($('eSsdh'+(i+1)))$('eSsdh'+(i+1)).value=v===0?'':v}); }
-    recalc(); $('mEntry').classList.add('open'); $('vLaporan').classList.remove('open');
+    recalc(); openWorkspace('input');
 };
 
 // --- FUNGSI RENDER MASTER (SUDAH DIUPGRADE PENCARIAN & ID-BASED) ---
@@ -1225,9 +1433,9 @@ function renderMaster(){
         const targetHour = getTargetShotHour(ct) * cav;
         return `
         <tr>
-            <td>${p.kode}</td>
-            <td>${p.nama}</td>
-            <td>${p.tipe}</td>
+            <td>${escapeHtml(p.kode)}</td>
+            <td>${escapeHtml(p.nama)}</td>
+            <td>${escapeHtml(p.tipe)}</td>
             <td class="right">${p.gram}</td>
             <td class="right">${p.runner}</td>
             <td class="right">${p.cavity}</td>
@@ -1235,11 +1443,13 @@ function renderMaster(){
             <td class="right">${targetHour ? fmtInt(targetHour) : '-'}</td>
             <td class="right">${p.per_dus}</td>
             <td style="text-align:center">
-                <button class="btn sm" onclick="editMaster('${p.id}')">✎</button> 
-                <button class="btn sm danger" onclick="deleteMaster('${p.id}')">🗑</button>
+                <button class="btn sm" data-action="edit" data-id="${escapeHtml(p.id)}">✎</button>
+                <button class="btn sm danger" data-action="delete" data-id="${escapeHtml(p.id)}">🗑</button>
             </td>
         </tr>`;
     }).join('');
+    t.querySelectorAll('[data-action="edit"]').forEach(button => button.addEventListener('click', () => window.editMaster(button.dataset.id)));
+    t.querySelectorAll('[data-action="delete"]').forEach(button => button.addEventListener('click', () => window.deleteMaster(button.dataset.id)));
 }
 
 // Fungsi Edit Master yang LEBIH AMAN (Pakai ID)
@@ -1264,7 +1474,7 @@ function fetchAndShowRekap(){
     if($('fFrom').value) $('rDateFrom').value = $('fFrom').value;
     if($('fTo').value) $('rDateTo').value = $('fTo').value;
     processRekapFilter(); 
-    $('mRekap').classList.add('open'); 
+    openWorkspace('recap');
 }
 
 function processRekapFilter() {
@@ -1302,7 +1512,7 @@ function renderRekapTable(m){
         if(lineDiff !== 0) return lineDiff;
         return a.n.localeCompare(b.n);
     });
-    $('tbodyRekap').innerHTML = sortedData.map(x => `<tr><td>${x.l}</td><td>${x.k}<br><small style="color:#fff">${x.n}</small></td><td class="right text-ok">${x.o.toLocaleString()}</td><td class="right text-danger">${x.r.toLocaleString()}</td><td class="right">${x.w.toFixed(2)}</td><td class="right"><b>${(x.c ? x.y / x.c : 0).toFixed(2)}%</b></td></tr>`).join('');
+    $('tbodyRekap').innerHTML = sortedData.map(x => `<tr><td>${escapeHtml(x.l)}</td><td>${escapeHtml(x.k)}<br><small style="color:#fff">${escapeHtml(x.n)}</small></td><td class="right text-ok">${x.o.toLocaleString()}</td><td class="right text-danger">${x.r.toLocaleString()}</td><td class="right">${x.w.toFixed(2)}</td><td class="right"><b>${(x.c ? x.y / x.c : 0).toFixed(2)}%</b></td></tr>`).join('');
 }
 
 function exportCSV(){

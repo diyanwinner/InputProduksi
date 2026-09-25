@@ -1,3 +1,6 @@
+@import url('styles/modern-shell.css?v=4.0.0');
+@import url('styles/entry-workflow.css?v=4.1.0');
+
 /* --- TITANIUM LUXURY THEME (DARK GREY & GOLD) --- */
 :root {
     --bg-body: #121212; --bg-card: #1e1e1e; --bg-input: #2d2d2d;

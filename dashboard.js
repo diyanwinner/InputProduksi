@@ -19,12 +19,12 @@ document.addEventListener('DOMContentLoaded', () => {
             start.setDate(end.getDate() - 7); // Default 7 hari terakhir
             document.getElementById('dFrom').value = start.toISOString().slice(0,10);
             document.getElementById('dTo').value = end.toISOString().slice(0,10);
-            document.getElementById('pDashboard').classList.add('open');
+            openWorkspace('monitoring');
             renderDashboard();
         };
     }
     
-    if(closeDash) closeDash.onclick = () => document.getElementById('pDashboard').classList.remove('open');
+    if(closeDash) closeDash.onclick = () => openWorkspace('home');
     if(loadDash) loadDash.onclick = renderDashboard;
 });
 
@@ -158,15 +158,15 @@ function renderDashboard() {
             return `
                 <tr>
                     <td><span class="target-pill ${meta.cls}">${meta.icon} ${meta.label}</span></td>
-                    <td><b>${r.line || '-'}</b></td>
-                    <td>${r.shift || '-'}</td>
-                    <td><b>${r.kode || '-'}</b><br><small>${r.nama || '-'}</small></td>
+                    <td><b>${escapeHtml(r.line || '-')}</b></td>
+                    <td>${escapeHtml(r.shift || '-')}</td>
+                    <td><b>${escapeHtml(r.kode || '-')}</b><br><small>${escapeHtml(r.nama || '-')}</small></td>
                     <td class="right">${tg.effectiveHours || '-'} jam</td>
                     <td class="right">${dashFmtInt(tg.targetActual)}</td>
                     <td class="right text-ok"><b>${dashFmtInt(tg.okpcs)}</b></td>
                     <td class="right ${tg.gapActual < 0 ? 'text-danger' : 'text-ok'}"><b>${dashFmtSigned(tg.gapActual)}</b></td>
                     <td class="right"><b>${dashFmtPct(tg.achActual)}</b></td>
-                    <td>${notes.join(' | ') || '-'}</td>
+                    <td>${escapeHtml(notes.join(' | ') || '-')}</td>
                 </tr>
             `;
         }).join('');
@@ -188,8 +188,8 @@ function renderDashboard() {
         tblBodyOk.innerHTML = topProdsOk.map(x => `
             <tr>
                 <td>
-                    <div style="font-weight:700; font-size:0.95rem; margin-bottom:2px; color:var(--gold); font-family:'JetBrains Mono', monospace;">${x.kode}</div>
-                    <div style="font-size:0.8rem; color:#E2E8F0;">${x.nama}</div>
+                    <div style="font-weight:700; font-size:0.95rem; margin-bottom:2px; color:var(--gold); font-family:'JetBrains Mono', monospace;">${escapeHtml(x.kode)}</div>
+                    <div style="font-size:0.8rem; color:#E2E8F0;">${escapeHtml(x.nama)}</div>
                 </td>
                 <td class="right text-ok" style="font-weight:bold; font-size:1.1rem; vertical-align:middle;">${x.ok.toLocaleString()}</td>
             </tr>
@@ -203,8 +203,8 @@ function renderDashboard() {
         tblBodyReject.innerHTML = topProdsReject.map(x => `
             <tr>
                 <td>
-                    <div style="font-weight:700; font-size:0.95rem; margin-bottom:2px; color:#E2E8F0; font-family:'JetBrains Mono', monospace;">${x.kode}</div>
-                    <div style="font-size:0.8rem; color:var(--text-muted);">${x.nama}</div>
+                    <div style="font-weight:700; font-size:0.95rem; margin-bottom:2px; color:#E2E8F0; font-family:'JetBrains Mono', monospace;">${escapeHtml(x.kode)}</div>
+                    <div style="font-size:0.8rem; color:var(--text-muted);">${escapeHtml(x.nama)}</div>
                 </td>
                 <td class="right text-danger" style="font-weight:bold; font-size:1.1rem; vertical-align:middle;">${x.rej.toLocaleString()}</td>
             </tr>
