@@ -1,0 +1,9 @@
+{
+  "name": "Portal Produksi",
+  "short_name": "Produksi",
+  "start_url": "./#/",
+  "display": "standalone",
+  "background_color": "#070b18",
+  "theme_color": "#070b18",
+  "description": "Input produksi dan monitoring operasional."
+}

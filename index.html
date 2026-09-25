@@ -4,6 +4,8 @@
     <meta charset="utf-8" />
     <meta name="theme-color" content="#070B18" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <link rel="manifest" href="manifest.webmanifest" />
     <title>Production System v3.0 - Clean Premium UI</title>
     
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -46,6 +48,7 @@
                 <button id="btnOpenLog" class="side-nav-item" type="button"><span class="side-icon">DA</span><span><b>Data Harian</b><small>Tabel & history</small></span></button>
                 <button id="btnRekap" class="side-nav-item" type="button"><span class="side-icon">RE</span><span><b>Rekap Line</b><small>Total output mesin</small></span></button>
                 <button id="btnMaster" class="side-nav-item" type="button"><span class="side-icon">MA</span><span><b>Master Produk</b><small>Database item</small></span></button>
+                <button id="btnGovernance" class="side-nav-item" type="button"><span class="side-icon">GV</span><span><b>Governance</b><small>Approval, audit & backup</small></span></button>
                 <button id="btnConfig" class="side-nav-item" type="button"><span class="side-icon">CF</span><span><b>Konfigurasi</b><small>Koneksi database</small></span></button>
             </nav>
 
@@ -68,9 +71,6 @@
                             <span id="targetBoardSync" class="cmd-sync-badge">Menunggu sync</span>
                         </div>
                         <div id="targetBoardSubtitle" class="cmd-subtitle muted">-</div>
-                    </div>
-                    <div class="cmd-header-right">
-                        <button id="btnOpenInputFromAlert" class="btn primary sm">+ Input Laporan</button>
                     </div>
                 </div>
 
@@ -191,6 +191,8 @@
             <span class="badge">Live</span>
         </div>
         <div class="modal-nav-actions">
+            <label class="dash-auto-label"><input id="dashAutoRefresh" type="checkbox"> Auto 60 dtk</label>
+            <button id="btnTvMode" class="btn info sm">MODE TV</button>
             <button id="pDashboardClose" class="btn danger sm">KEMBALI</button>
         </div>
     </nav>
@@ -199,8 +201,8 @@
             <div class="row" style="align-items:flex-end;">
                 <div style="flex:1"><div class="muted">Awal</div><input id="dFrom" type="date" class="input"></div>
                 <div style="flex:1"><div class="muted">Akhir</div><input id="dTo" type="date" class="input"></div>
-                <div style="flex:1"><div class="muted">Filter Line</div><input id="dLine" class="input" placeholder="Semua Line"></div>
-                <button id="btnLoadDash" class="btn primary sm">ANALISA</button>
+                <div style="flex:1"><div class="muted">Shift</div><select id="dShift" class="input"><option value="">Semua Shift</option><option value="1">Shift 1</option><option value="2">Shift 2</option><option value="3">Shift 3</option></select></div>
+                <button id="btnLoadDash" class="btn primary sm">PERBARUI RINGKASAN</button>
             </div>
         </div>
 
@@ -217,34 +219,38 @@
             <div class="stat-box success-soft"><div class="muted">Target Aktual Tercapai</div><span id="kpiTargetOk" class="stat-value">0</span></div>
         </div>
 
-        <div class="row" style="align-items:stretch;">
-            <div class="card" style="flex:2; min-width:300px;"><h3 style="margin-bottom:16px; font-size:1rem;">📈 Trend Produksi</h3><div style="height:300px;"><canvas id="chartTrend"></canvas></div></div>
-            <div class="card" style="flex:1; min-width:300px;"><h3 style="margin-bottom:16px; font-size:1rem; color:var(--danger);">⚠ Pareto Reject (Jenis)</h3><div style="height:300px;"><canvas id="chartPareto"></canvas></div></div>
+        <section class="card dash-focus-card" aria-labelledby="dashFocusTitle">
+            <div class="dash-focus-head"><div><span class="ops-eyebrow">PEMERIKSAAN SPESIFIK</span><h3 id="dashFocusTitle">Apa yang ingin diperiksa?</h3><p>Pilih mesin atau produk. Detail tidak dimuat sebelum pilihan dibuat.</p></div><button id="btnClearDashFocus" class="btn sm" type="button">Reset</button></div>
+            <div class="dash-focus-tabs" role="tablist"><button class="active" type="button" data-focus-mode="line">Per Mesin</button><button type="button" data-focus-mode="product">Per Produk</button></div>
+            <div class="dash-focus-controls">
+                <label id="dashLineControl"><span>Mesin / Line</span><select id="dFocusLine" class="input"><option value="">Pilih mesin...</option></select></label>
+                <label id="dashProductControl" hidden><span>Produk</span><input id="dFocusProduct" class="input" list="dashProductOptions" placeholder="Ketik kode atau nama produk..."><datalist id="dashProductOptions"></datalist></label>
+                <button id="btnApplyDashFocus" class="btn primary" type="button">Tampilkan Detail</button>
+            </div>
+            <div id="dashFocusEmpty" class="dash-focus-empty">Belum ada detail ditampilkan.</div>
+        </section>
+
+        <div id="dashFocusedContent" hidden>
+            <section class="ops-section" aria-labelledby="opsSnapshotTitle"><div class="ops-section-head"><div><span class="ops-eyebrow">HASIL PEMERIKSAAN</span><h3 id="opsSnapshotTitle">Detail pilihan</h3></div><span id="opsPeriodBadge" class="badge">-</span></div><div class="ops-layout"><div id="opsLineGrid" class="ops-line-grid"></div><aside class="ops-action-panel"><h4>Prioritas tindak lanjut</h4><div id="opsActionQueue" class="ops-action-list"></div><h4>Penyebab dominan</h4><div id="opsReasonList" class="ops-reason-list"></div></aside></div></section>
+            <details id="dashAnalytics" class="card dash-analytics"><summary>Analitik lanjutan</summary><div class="row" style="align-items:stretch;"><div class="card" style="flex:2; min-width:300px;"><h3>Trend Target vs Aktual</h3><div style="height:300px;"><canvas id="chartTrend"></canvas></div></div><div class="card" style="flex:1; min-width:300px;"><h3>Pareto Reject 80/20</h3><div style="height:300px;"><canvas id="chartPareto"></canvas></div></div></div><div class="row" style="align-items:stretch;"><div class="card" style="flex:1; min-width:300px;"><h3>Downtime Pareto</h3><div style="height:280px;"><canvas id="chartDowntime"></canvas></div></div><div class="card" style="flex:1; min-width:300px;"><h3>Ranking Line</h3><div class="table-container"><table id="tblLineRanking"><thead><tr><th>#</th><th>Line</th><th class="right">Achv</th><th class="right">Yield</th><th class="right">Gap</th></tr></thead><tbody></tbody></table></div></div></div><div class="table-container"><table id="tblTargetDetail"><thead><tr><th>Status</th><th>Line</th><th>Shift</th><th>Produk</th><th class="right">Jam efektif</th><th class="right">Target</th><th class="right">OK</th><th class="right">Gap</th><th class="right">Achv</th><th>Catatan</th></tr></thead><tbody></tbody></table></div></details>
         </div>
-
-<div class="row" style="align-items:stretch;">
-            <div class="card" style="flex:1; min-width:300px;">
-                <h3 style="margin-bottom:12px; font-size:1rem; color:var(--success);">🏆 Top 5 Produk (OK Terbanyak)</h3>
-                <div class="table-container">
-                    <table id="tblTopProd">
-                        <thead><tr><th>Produk</th><th class="right">Total OK</th></tr></thead>
-                        <tbody></tbody>
-                    </table>
-                </div>
-            </div>
-
-            <div class="card" style="flex:1; min-width:300px;">
-                <h3 style="margin-bottom:12px; font-size:1rem; color:var(--danger);">💀 Top 5 Produk (Reject Terbanyak)</h3>
-                <div class="table-container">
-                    <table id="tblTopReject"> 
-                        <thead><tr><th>Produk</th><th class="right">Total Reject</th></tr></thead>
-                        <tbody></tbody>
-                    </table>
-                </div>
-            </div>
-        </div> 
     </div> 
 </div> 
+
+<div id="mGovernance" class="modal full">
+    <nav class="modal-sticky-nav"><div class="modal-nav-title"><span class="modal-nav-icon">◆</span><h2>Governance Center</h2><span class="badge">Fase 5</span></div><div class="modal-nav-actions"><button id="mGovernanceClose" class="btn danger sm">KEMBALI</button></div></nav>
+    <div class="wrap-full governance-page">
+        <div class="dash-kpi-grid-compact"><div class="stat-box warning-soft"><div class="muted">Menunggu Approval</div><span id="govPendingCount" class="stat-value">0</span></div><div class="stat-box info-soft"><div class="muted">Periode Dikunci</div><span id="govLockCount" class="stat-value">0</span></div><div class="stat-box danger-soft"><div class="muted">Error Tercatat</div><span id="govErrorCount" class="stat-value">0</span></div></div>
+        <div class="governance-grid">
+            <section class="card"><h3>Approval & Koreksi Laporan</h3><div class="table-container"><table><thead><tr><th>Tanggal</th><th>Line</th><th>Produk</th><th>Status</th><th>Aksi</th></tr></thead><tbody id="govApprovalBody"></tbody></table></div></section>
+            <aside class="card"><h3>Lock Periode</h3><div class="grid"><input id="govLockFrom" type="date" class="input"><input id="govLockTo" type="date" class="input"><input id="govLockReason" class="input" placeholder="Alasan penguncian"><button id="btnAddLock" class="btn primary">Kunci periode</button></div><div id="govLockList" class="gov-list"></div></aside>
+        </div>
+        <div class="governance-grid">
+            <section class="card"><div class="gov-title-row"><h3>Audit Log</h3><button id="btnExportBackup" class="btn sm info">Export Backup</button></div><div class="table-container"><table><thead><tr><th>Waktu</th><th>Aksi</th><th>Entitas</th><th>ID</th></tr></thead><tbody id="govAuditBody"></tbody></table></div></section>
+            <aside class="card"><h3>Master & Monitoring</h3><input id="governanceMasterFile" type="file" accept=".csv,text/csv" hidden><button id="btnImportMasterCsv" class="btn primary" style="width:100%">Import Master CSV</button><p class="muted">Kolom: kode, nama, tipe, gram, runner, cavity.</p><h4>Error terbaru</h4><div id="govErrorList" class="gov-list"></div></aside>
+        </div>
+    </div>
+</div>
 
 <div id="mRekap" class="modal full">
     <nav class="modal-sticky-nav">
@@ -551,7 +557,10 @@
 </div></div>
 
 <script src="production-core.js?v=1.0.0"></script>
+<script src="operational-dashboard.js?v=4.0.0"></script>
+<script src="governance-core.js?v=5.0.0"></script>
 <script src="app.js?v=3.5.0"></script>
-<script src="dashboard.js?v=3.5.0"></script>
+<script src="dashboard.js?v=4.0.0"></script>
+<script src="governance.js?v=5.0.0"></script>
 </body>
 </html>
