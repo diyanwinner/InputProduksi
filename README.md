@@ -2,6 +2,12 @@
 
 Aplikasi web ringan untuk input akhir shift, monitoring target, rekap line, master produk, dan analisis reject. Aplikasi berjalan langsung di browser dan menyimpan data melalui Supabase.
 
+Dashboard operasional Fase 4 menambahkan snapshot line pada shift terbaru, antrean prioritas berdasarkan gap target, ringkasan penyebab dominan, filter shift, dan detail kendali target. Fitur pencarian line serta target control Fase 3 tetap tersedia. Mekanisme koneksi Supabase dan PIN admin tidak diubah.
+
+Governance Center Fase 5 menyediakan alur approval laporan, penguncian periode, audit aktivitas, import master CSV, export backup, dan monitoring error lokal. Area ini mengikuti proteksi admin yang sudah ada tanpa mengubah konfigurasi Supabase atau nilai PIN.
+
+Dashboard operasional kini mencakup trend target versus aktual, Pareto reject kumulatif 80/20, downtime Pareto, ranking line dengan drill-down, auto-refresh opsional, dan mode TV. Supabase Auth dan PIN admin tetap tidak diubah.
+
 ## Menjalankan aplikasi
 
 Gunakan static server agar perilakunya sama dengan deployment:
