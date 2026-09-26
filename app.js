@@ -39,6 +39,7 @@ let client = null;
 let logs = [];
 let master = [];
 let _rekapLogs = [];
+let homeTrendChart = null;
 
 // TARGET CONTROL SETTINGS
 const STANDARD_SHIFT_HOURS = ProductionCore.STANDARD_SHIFT_HOURS;
@@ -150,7 +151,6 @@ function statusMeta(status) {
     return TARGET_STATUS[status] || TARGET_STATUS.NO_TARGET;
 }
 
-
 function scrollEntryFormToTop(behavior = 'smooth') {
     const entryModal = $('mEntry');
     if(!entryModal) return;
@@ -260,6 +260,8 @@ document.addEventListener('DOMContentLoaded', () => {
     $('btnAdd').onclick = openFreshEntry;
     if($('btnOpenInputFromAlert')) $('btnOpenInputFromAlert').onclick = openFreshEntry;
     if($('btnOpenInputFromTop')) $('btnOpenInputFromTop').onclick = openFreshEntry;
+    if($('btnHomeInput')) $('btnHomeInput').onclick = () => $('btnAdd').click();
+    if($('btnHomeMaster')) $('btnHomeMaster').onclick = () => $('btnMaster').click();
     $('btnRekap').onclick = fetchAndShowRekap;
     $('btnOpenLog').onclick = () => { openWorkspace('reports'); renderTable(); };
 
@@ -335,6 +337,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }));
     window.addEventListener('popstate', () => openWorkspace(currentHashRoute(), false));
     openWorkspace(currentHashRoute(), false);
+    renderTargetBoard();
 
     const sUrl = localStorage.getItem('prod_sb_url');
     const sKey = localStorage.getItem('prod_sb_key');
@@ -688,82 +691,89 @@ function renderLineFocus() {
     $('lineFocusPanel')?.scrollIntoView({ behavior:'smooth', block:'nearest' });
 }
 
+function renderHomeTrend(rows) {
+    const canvas = $('homeTrendChart');
+    if(homeTrendChart) { homeTrendChart.destroy(); homeTrendChart = null; }
+    if(!canvas || typeof Chart === 'undefined') return;
+    const trend = OperationalDashboard.targetTrend(rows, row => extractLogTarget(row)).filter(point => point.target > 0);
+    if(!trend.length) return;
+    homeTrendChart = new Chart(canvas.getContext('2d'), {
+        type: 'line',
+        data: { labels: trend.map(point => point.date.slice(5)), datasets: [
+            { label:'Target', data:trend.map(point => point.target), borderColor:'#7287FF', borderWidth:2, borderDash:[5,5], pointRadius:0, tension:.32 },
+            { label:'Aktual', data:trend.map(point => point.actual), borderColor:'#4ED7E8', backgroundColor:'rgba(78,215,232,.10)', fill:true, borderWidth:2.4, pointRadius:0, tension:.32 }
+        ] },
+        options: { responsive:true, maintainAspectRatio:false, interaction:{mode:'index',intersect:false}, plugins:{legend:{display:false},tooltip:{backgroundColor:'#101A31',titleColor:'#F8FAFC',bodyColor:'#CBD5E1',padding:10,displayColors:true}}, scales:{x:{grid:{display:false},ticks:{color:'#7F8CA3',maxTicksLimit:6,font:{size:10}}},y:{beginAtZero:true,grid:{color:'rgba(148,163,184,.10)'},ticks:{color:'#7F8CA3',maxTicksLimit:4,font:{size:10}}}} }
+    });
+    if($('homeTrendCaption')) $('homeTrendCaption').textContent = `${trend.length} hari data`;
+}
+
 function renderTargetBoard() {
     if(!$('targetControlBoard')) return;
-    const sync = $('targetBoardSync');
+    const sync = $('targetBoardSync'), empty = $('homeEmptyState'), content = $('homeDashboardContent');
     if(!logs.length) {
+        if(homeTrendChart) { homeTrendChart.destroy(); homeTrendChart = null; }
         if(sync) sync.innerText = 'Belum ada data';
-        ['latestShiftAlerts','yesterdayAlerts','cavityLossAlerts'].forEach(id => { if($(id)) $(id).innerHTML = 'Belum ada data produksi.'; });
+        if($('targetBoardSubtitle')) $('targetBoardSubtitle').innerText = 'Menunggu laporan shift pertama';
+        if(empty) empty.hidden = false;
+        if(content) content.hidden = true;
         return;
     }
+    if(empty) empty.hidden = true;
+    if(content) content.hidden = false;
 
     const boardLogs = uniqueDashboardLogs(logs);
-
-    const sorted = [...boardLogs].sort((a,b) => {
-        const da = `${a.tanggal || ''}-${String(a.shift || '').padStart(2,'0')}`;
-        const db = `${b.tanggal || ''}-${String(b.shift || '').padStart(2,'0')}`;
-        return db.localeCompare(da);
-    });
-
-    const latest = sorted[0];
-    const latestDate = latest.tanggal;
-    const latestShift = latest.shift;
+    const sorted = [...boardLogs].sort((a,b) => `${b.tanggal || ''}-${String(b.shift || '').padStart(2,'0')}`.localeCompare(`${a.tanggal || ''}-${String(a.shift || '').padStart(2,'0')}`));
+    const latest = sorted[0], latestDate = latest.tanggal, latestShift = latest.shift;
     const latestShiftLogs = sorted.filter(r => r.tanggal === latestDate && r.shift == latestShift);
-    const latestBad = latestShiftLogs.filter(r => {
-        const tg = extractLogTarget(r);
-        return tg.targetActual > 0 && isTargetUnsafe(tg.status);
-    }).sort((a,b) => extractLogTarget(a).gapActual - extractLogTarget(b).gapActual);
-    const latestOk = latestShiftLogs.filter(r => {
-        const tg = extractLogTarget(r);
-        return tg.targetActual > 0 && !isTargetUnsafe(tg.status);
-    }).length;
+    const latestTargets = latestShiftLogs.map(r => ({ row:r, target:extractLogTarget(r) })).filter(item => item.target.targetActual > 0);
+    const latestBad = latestTargets.filter(item => isTargetUnsafe(item.target.status)).map(item => item.row).sort((a,b) => extractLogTarget(a).gapActual - extractLogTarget(b).gapActual);
+    const latestTargetTotal = latestTargets.reduce((sum,item) => sum + item.target.targetActual, 0);
+    const latestOkTotal = latestShiftLogs.reduce((sum,row) => sum + toNum(row.okpcs), 0);
+    const achievement = latestTargetTotal ? latestOkTotal / latestTargetTotal * 100 : null;
 
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
     const yesterdayStr = ymd(yesterday);
-    let dayLogs = sorted.filter(r => r.tanggal === yesterdayStr);
-    let dayLabel = yesterdayStr;
-    if(!dayLogs.length) {
-        dayLabel = latestDate;
-        dayLogs = sorted.filter(r => r.tanggal === latestDate);
-    }
-    const dayBad = dayLogs.filter(r => {
-        const tg = extractLogTarget(r);
-        return tg.targetActual > 0 && isTargetUnsafe(tg.status);
-    }).sort((a,b) => extractLogTarget(a).gapActual - extractLogTarget(b).gapActual);
+    let dayLogs = sorted.filter(r => r.tanggal === yesterdayStr), dayLabel = yesterdayStr;
+    if(!dayLogs.length) { dayLabel = latestDate; dayLogs = sorted.filter(r => r.tanggal === latestDate); }
+    const dayBad = dayLogs.filter(r => { const target = extractLogTarget(r); return target.targetActual > 0 && isTargetUnsafe(target.status); });
 
-    const last7 = new Date();
-    last7.setDate(last7.getDate() - 7);
-    const capacityLoss = sorted.filter(r => {
-        const d = new Date((r.tanggal || '') + 'T12:00:00');
-        const tg = extractLogTarget(r);
-        return d >= last7 && tg.capacityLossTotal > 0;
-    }).sort((a,b) => extractLogTarget(b).capacityLossTotal - extractLogTarget(a).capacityLossTotal);
+    const last7 = new Date(); last7.setDate(last7.getDate() - 7);
+    const capacityLoss = sorted.filter(r => new Date((r.tanggal || '') + 'T12:00:00') >= last7 && extractLogTarget(r).capacityLossTotal > 0).sort((a,b) => extractLogTarget(b).capacityLossTotal - extractLogTarget(a).capacityLossTotal);
+    const lossTotal = capacityLoss.reduce((sum, row) => sum + extractLogTarget(row).capacityLossTotal, 0);
+    const reasonMap = new Map();
+    capacityLoss.forEach(row => {
+        const target = extractLogTarget(row), reason = row.planned_stop_reason || row.cavity_adjust_reason || row.under_target_reason || 'Kapasitas turun';
+        reasonMap.set(reason, (reasonMap.get(reason) || 0) + target.capacityLossTotal);
+    });
+    const reasons = [...reasonMap].map(([reason, value]) => ({ reason, value })).sort((a,b) => b.value - a.value);
+    const topReason = reasons[0]?.reason || 'Belum ada penyebab loss tercatat';
 
+    if($('alertKpiAchievement')) $('alertKpiAchievement').innerText = achievement === null ? '—' : fmtPct(achievement);
+    if($('alertKpiAchievementSub')) $('alertKpiAchievementSub').innerText = achievement === null ? 'Target belum tersedia' : `Target ${fmtInt(latestTargetTotal)} pcs`;
     if($('alertKpiBad')) $('alertKpiBad').innerText = latestBad.length;
-    if($('alertKpiLoss')) $('alertKpiLoss').innerText = fmtInt(capacityLoss.reduce((sum, r) => sum + extractLogTarget(r).capacityLossTotal, 0));
-    if($('alertKpiOk')) $('alertKpiOk').innerText = latestOk;
-    if($('alertKpiShift')) $('alertKpiShift').innerText = `${latestDate || '-'} S${latestShift || '-'}`;
+    if($('alertKpiLoss')) $('alertKpiLoss').innerText = fmtInt(lossTotal);
+    if($('alertKpiOk')) $('alertKpiOk').innerText = fmtInt(latestOkTotal);
+    if($('alertKpiShift')) $('alertKpiShift').innerText = `${latestDate || '-'} · Shift ${latestShift || '-'}`;
     if(sync) sync.innerText = `${logs.length} data tersinkron`;
-    if($('targetBoardSubtitle')) $('targetBoardSubtitle').innerText = `Data terbaru: ${latestDate || '-'} shift ${latestShift || '-'} | Hari pembanding: ${dayLabel}`;
+    if($('targetBoardSubtitle')) $('targetBoardSubtitle').innerText = `${latestDate || '-'} · Shift ${latestShift || '-'} · Pembanding ${dayLabel}`;
+    if($('homeHeroTitle')) $('homeHeroTitle').textContent = achievement === null ? 'Target shift terbaru belum tersedia' : `Produksi shift terbaru mencapai ${fmtPct(achievement)} dari target`;
+    if($('homeHeroAchievement')) $('homeHeroAchievement').textContent = achievement === null ? '—' : fmtPct(achievement);
+    if($('homeHeroSub')) $('homeHeroSub').textContent = `${latestBad.length} line perlu perhatian · Loss terbesar: ${topReason}`;
 
-    if($('latestShiftAlerts')) {
-        $('latestShiftAlerts').innerHTML = latestBad.length
-            ? latestBad.map(r => makeAlertItem(r)).join('')
-            : `<div class="alert-empty">Shift terakhir aman terhadap target aktual.</div>`;
-    }
+    if($('latestShiftAlerts')) $('latestShiftAlerts').innerHTML = latestBad.length ? latestBad.slice(0,5).map(row => {
+        const target = extractLogTarget(row), reason = row.under_target_reason || row.planned_stop_reason || row.cavity_adjust_reason || '-';
+        const progress = Math.max(0, Math.min(100, target.achActual));
+        return `<article class="critical-line-row"><div class="critical-line-main"><b>${escapeHtml(row.line || '-')}</b><span>Shift ${escapeHtml(row.shift || '-')} · ${escapeHtml(row.nama || row.kode || '-')}</span></div><div class="critical-line-metrics"><b>${fmtPct(target.achActual)}</b><span class="${target.gapActual < 0 ? 'text-danger' : 'text-ok'}">${fmtSigned(target.gapActual)}</span></div><div class="critical-line-reason">${escapeHtml(reason)}</div><div class="critical-line-progress"><i style="width:${progress}%"></i></div></article>`;
+    }).join('') : `<div class="alert-empty">Shift terbaru aman terhadap target aktual.</div>`;
 
-    if($('yesterdayAlerts')) {
-        $('yesterdayAlerts').innerHTML = dayBad.length
-            ? dayBad.slice(0,30).map(r => makeAlertItem(r)).join('')
-            : `<div class="alert-empty">✅ Tidak ada produk tidak target pada ${dayLabel} berdasarkan data yang tersimpan.</div>`;
-    }
+    if($('cavityLossAlerts')) $('cavityLossAlerts').innerHTML = reasons.length ? reasons.slice(0,4).map(item => {
+        const proportion = lossTotal ? item.value / lossTotal * 100 : 0;
+        return `<div class="reason-bar-row"><div><span>${escapeHtml(item.reason)}</span><b>${fmtInt(item.value)} pcs</b></div><div class="reason-bar"><i style="width:${proportion}%"></i></div></div>`;
+    }).join('') : `<div class="alert-empty">Tidak ada catatan capacity loss dalam 7 hari terakhir.</div>`;
 
-    if($('cavityLossAlerts')) {
-        $('cavityLossAlerts').innerHTML = capacityLoss.length
-            ? capacityLoss.slice(0,30).map(r => makeAlertItem(r, { showLoss:true })).join('')
-            : `<div class="alert-empty">Tidak ada catatan kapasitas turun dalam 7 hari terakhir.</div>`;
-    }
+    if($('yesterdayAlerts')) $('yesterdayAlerts').textContent = `Pembanding ${dayLabel}: ${dayBad.length ? `${dayBad.length} line belum aman` : 'tidak ada line tidak target'}.`;
+    renderHomeTrend(boardLogs);
 }
 
 // === ENTRY ===

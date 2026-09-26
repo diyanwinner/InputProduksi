@@ -1,10 +1,9 @@
 /* DASHBOARD MONITORING ROOM - TARGET CONTROL v2.9.2 */
 
-let chartTrendInstance = null;
-let chartParetoInstance = null;
-let chartDowntimeInstance = null;
 let dashboardRefreshTimer = null;
 let dashboardFocusMode = 'line';
+let dashboardFocusProducts = [];
+let dashboardFocusProductActive = -1;
 
 function dashFmtInt(n) { return Math.round(+n || 0).toLocaleString('id-ID'); }
 function dashFmtPct(n) { return ((+n || 0).toFixed(1)) + '%'; }
@@ -41,7 +40,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.querySelectorAll('[data-focus-mode]').forEach(button => button.onclick = () => setDashboardFocusMode(button.dataset.focusMode));
     if(focusApply) focusApply.onclick = renderDashboard;
     if(focusClear) focusClear.onclick = clearDashboardFocus;
-    document.getElementById('dashAnalytics')?.addEventListener('toggle', event => { if(event.target.open) renderDashboard(); });
+    installDashboardProductAutocomplete();
 });
 
 function setDashboardFocusMode(mode) {
@@ -55,10 +54,8 @@ function setDashboardFocusMode(mode) {
 
 function clearDashboardFocus() {
     document.getElementById('dFocusLine').value = '';
-    document.getElementById('dFocusProduct').value = '';
-    document.getElementById('dashFocusedContent').hidden = true;
-    document.getElementById('dashFocusEmpty').hidden = false;
-    document.getElementById('dashAnalytics').open = false;
+    clearDashboardProductSelection();
+    showDashboardFocusEmpty('Belum ada detail ditampilkan.');
 }
 
 function populateDashboardFocusOptions(rows) {
@@ -67,8 +64,114 @@ function populateDashboardFocusOptions(rows) {
     const lines = [...new Set(rows.map(row => (row.line || '').trim()).filter(Boolean))].sort((a,b) => a.localeCompare(b, 'id', { numeric:true }));
     lineSelect.innerHTML = '<option value="">Pilih mesin...</option>' + lines.map(line => `<option value="${escapeHtml(line)}">${escapeHtml(line)}</option>`).join('');
     if(lines.includes(currentLine)) lineSelect.value = currentLine;
-    const products = new Map(); rows.forEach(row => { if(row.kode || row.nama) products.set(`${row.kode || ''}|${row.nama || ''}`, `${row.kode || '-'} — ${row.nama || '-'}`); });
-    document.getElementById('dashProductOptions').innerHTML = [...products.values()].sort().map(label => `<option value="${escapeHtml(label)}"></option>`).join('');
+    const products = new Map();
+    rows.forEach(row => {
+        const code = String(row.kode || '').trim();
+        const name = String(row.nama || '').trim();
+        if(!code && !name) return;
+        const key = `${normalizeDashboardProductCode(code)}|${normalizeDashboardProductText(name)}`;
+        products.set(key, { code, name, label: `${code || '-'} — ${name || '-'}` });
+    });
+    dashboardFocusProducts = [...products.values()].sort((a,b) => a.label.localeCompare(b.label, 'id'));
+    const input = document.getElementById('dFocusProduct');
+    const selected = getDashboardFocusProduct();
+    if(selected && !dashboardFocusProducts.some(product => product.code === selected.code && product.name === selected.name)) clearDashboardProductSelection();
+    if(input === document.activeElement) renderDashboardProductOptions(input.value);
+}
+
+function showDashboardFocusEmpty(message) {
+    const empty = document.getElementById('dashFocusEmpty');
+    if(empty) { empty.textContent = message; empty.hidden = false; }
+    const content = document.getElementById('dashFocusedContent');
+    if(content) content.hidden = true;
+}
+
+function normalizeDashboardProductText(value) { return String(value || '').trim().toLocaleLowerCase('id-ID'); }
+function normalizeDashboardProductCode(value) { return String(value || '').trim().toUpperCase(); }
+
+function getDashboardFocusProduct() {
+    const input = document.getElementById('dFocusProduct');
+    if(!input?.dataset.productCode && !input?.dataset.productName) return null;
+    return { code: input.dataset.productCode || '', name: input.dataset.productName || '', label: input.value.trim() };
+}
+
+function clearDashboardProductSelection() {
+    const input = document.getElementById('dFocusProduct');
+    if(!input) return;
+    input.value = '';
+    delete input.dataset.productCode;
+    delete input.dataset.productName;
+    hideDashboardProductOptions();
+}
+
+function setDashboardFocusProduct(product) {
+    const input = document.getElementById('dFocusProduct');
+    if(!input || !product) return;
+    input.dataset.productCode = product.code || '';
+    input.dataset.productName = product.name || '';
+    input.value = product.label;
+    hideDashboardProductOptions();
+}
+
+function hideDashboardProductOptions() {
+    const options = document.getElementById('dashProductOptions');
+    const input = document.getElementById('dFocusProduct');
+    if(options) { options.hidden = true; options.innerHTML = ''; }
+    if(input) input.setAttribute('aria-expanded', 'false');
+    dashboardFocusProductActive = -1;
+}
+
+function renderDashboardProductOptions(query = '') {
+    const options = document.getElementById('dashProductOptions');
+    const input = document.getElementById('dFocusProduct');
+    if(!options || !input) return;
+    const term = normalizeDashboardProductText(query);
+    const matches = dashboardFocusProducts.filter(product => !term || normalizeDashboardProductText(product.code).includes(term) || normalizeDashboardProductText(product.name).includes(term)).slice(0, 60);
+    dashboardFocusProductActive = matches.length ? 0 : -1;
+    options.innerHTML = matches.length ? matches.map((product, index) => `<button type="button" class="dash-product-option${index === dashboardFocusProductActive ? ' active' : ''}" role="option" aria-selected="${index === dashboardFocusProductActive}" data-product-index="${dashboardFocusProducts.indexOf(product)}"><strong>${escapeHtml(product.code || '-')}</strong><small>${escapeHtml(product.name || '-')}</small></button>`).join('') : '<div class="dash-product-no-result">Produk tidak ditemukan.</div>';
+    options.hidden = false;
+    input.setAttribute('aria-expanded', 'true');
+    options.querySelectorAll('[data-product-index]').forEach(button => button.onclick = () => setDashboardFocusProduct(dashboardFocusProducts[Number(button.dataset.productIndex)]));
+}
+
+function updateDashboardProductActive(direction) {
+    const buttons = [...document.querySelectorAll('#dashProductOptions [data-product-index]')];
+    if(!buttons.length) return;
+    dashboardFocusProductActive = (dashboardFocusProductActive + direction + buttons.length) % buttons.length;
+    buttons.forEach((button, index) => {
+        const active = index === dashboardFocusProductActive;
+        button.classList.toggle('active', active);
+        button.setAttribute('aria-selected', String(active));
+        if(active) button.scrollIntoView({ block:'nearest' });
+    });
+}
+
+function installDashboardProductAutocomplete() {
+    const input = document.getElementById('dFocusProduct');
+    if(!input) return;
+    input.addEventListener('input', () => {
+        delete input.dataset.productCode;
+        delete input.dataset.productName;
+        renderDashboardProductOptions(input.value);
+    });
+    input.addEventListener('focus', () => renderDashboardProductOptions(input.value));
+    input.addEventListener('keydown', event => {
+        const options = document.getElementById('dashProductOptions');
+        if(event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+            event.preventDefault();
+            if(options.hidden) renderDashboardProductOptions(input.value);
+            else updateDashboardProductActive(event.key === 'ArrowDown' ? 1 : -1);
+        } else if(event.key === 'Enter' && !options.hidden && dashboardFocusProductActive >= 0) {
+            event.preventDefault();
+            const option = options.querySelectorAll('[data-product-index]')[dashboardFocusProductActive];
+            if(option) setDashboardFocusProduct(dashboardFocusProducts[Number(option.dataset.productIndex)]);
+        } else if(event.key === 'Escape') {
+            hideDashboardProductOptions();
+        }
+    });
+    document.addEventListener('pointerdown', event => {
+        if(!event.target.closest('.dash-product-autocomplete')) hideDashboardProductOptions();
+    });
 }
 
 function renderDashboard() {
@@ -87,7 +190,9 @@ function renderDashboard() {
     const periodData = OperationalDashboard.filterRows(sourceRows, { from: startStr, to: endStr, shift: shiftFilter });
 
     if(periodData.length === 0) {
-        alert("Tidak ada data produksi di periode/filter ini.");
+        const hasFocus = dashboardFocusMode === 'line' ? Boolean(document.getElementById('dFocusLine').value.trim()) : Boolean(document.getElementById('dFocusProduct').value.trim());
+        if(hasFocus) showDashboardFocusEmpty('Tidak ada data untuk pilihan ini pada periode dan shift yang dipilih.');
+        else alert("Tidak ada data produksi di periode/filter ini.");
         return;
     }
 
@@ -114,164 +219,50 @@ function renderDashboard() {
     if(document.getElementById('kpiTargetOk')) document.getElementById('kpiTargetOk').innerText = targetOk.length.toLocaleString('id-ID');
     if(document.getElementById('kpiGapActual')) document.getElementById('kpiGapActual').innerText = dashFmtSigned(gapActualTotal);
     if(document.getElementById('kpiCapacityLoss')) document.getElementById('kpiCapacityLoss').innerText = dashFmtInt(capacityLossTotal);
+    renderGlobalOperationalSnapshot(periodData, startStr, endStr, shiftFilter);
 
     populateDashboardFocusOptions(periodData);
     const focusValue = dashboardFocusMode === 'line' ? document.getElementById('dFocusLine').value.trim() : document.getElementById('dFocusProduct').value.trim();
     if(!focusValue) { clearDashboardFocus(); return; }
-    const separatorIndex = focusValue.indexOf(' — ');
-    const productCode = separatorIndex >= 0 ? focusValue.slice(0, separatorIndex).trim() : '';
-    const productName = separatorIndex >= 0 ? focusValue.slice(separatorIndex + 3).trim() : '';
+    const selectedProduct = dashboardFocusMode === 'product' ? getDashboardFocusProduct() : null;
+    if(dashboardFocusMode === 'product' && !selectedProduct) {
+        showDashboardFocusEmpty('Pilih produk dari daftar pencarian terlebih dahulu.');
+        return;
+    }
     const dataDash = periodData.filter(row => dashboardFocusMode === 'line'
         ? String(row.line || '').toUpperCase() === focusValue.toUpperCase()
-        : productCode && productName && String(row.kode || '').trim().toUpperCase() === productCode.toUpperCase() && String(row.nama || '').trim().toLowerCase() === productName.toLowerCase());
-    if(!dataDash.length) { document.getElementById('dashFocusEmpty').textContent = 'Data pilihan tidak ditemukan pada periode ini.'; document.getElementById('dashFocusEmpty').hidden = false; document.getElementById('dashFocusedContent').hidden = true; return; }
+        : (selectedProduct.code
+            ? normalizeDashboardProductCode(row.kode) === normalizeDashboardProductCode(selectedProduct.code)
+            : normalizeDashboardProductText(row.nama) === normalizeDashboardProductText(selectedProduct.name)));
+    if(!dataDash.length) { showDashboardFocusEmpty('Tidak ada data untuk pilihan ini pada periode dan shift yang dipilih.'); return; }
     document.getElementById('dashFocusEmpty').hidden = true;
     document.getElementById('dashFocusedContent').hidden = false;
-    document.getElementById('opsSnapshotTitle').textContent = dashboardFocusMode === 'line' ? `Mesin ${focusValue}` : `Produk ${focusValue}`;
+    document.getElementById('dashFocusResultTitle').textContent = dashboardFocusMode === 'line' ? `Mesin ${focusValue}` : `Produk ${selectedProduct.label}`;
     renderOperationalSnapshot(dataDash, startStr, endStr, shiftFilter, dashboardFocusMode);
-    if(!document.getElementById('dashAnalytics').open) return;
-    const targetRows = dataDash.map(r => ({ raw:r, tg:extractLogTarget(r) })).filter(x => x.tg.targetActual > 0);
-
-    // 3. CHART 1: TREND PRODUKSI
-    const trend = OperationalDashboard.targetTrend(dataDash, extractLogTarget);
-    const labelsTrend = trend.map(point => point.date);
-    
-    const ctxTrend = document.getElementById('chartTrend').getContext('2d');
-    if(chartTrendInstance) chartTrendInstance.destroy();
-    chartTrendInstance = new Chart(ctxTrend, {
-        type: 'line',
-        data: {
-            labels: labelsTrend,
-            datasets: [
-                { label: 'Target Aktual', data: trend.map(point => point.target), borderColor: '#FBBF24', backgroundColor: 'rgba(251,191,36,.12)', tension:.25, fill:true },
-                { label: 'OK Aktual', data: trend.map(point => point.actual), borderColor: '#34D399', backgroundColor: 'rgba(52,211,153,.1)', tension:.25, fill:true }
-            ]
-        },
-        options: { 
-            responsive: true, 
-            maintainAspectRatio: false, 
-            scales: { x: { ticks:{color:'#94A3B8'} }, y: { beginAtZero:true, ticks:{color:'#94A3B8'}, grid:{color:'rgba(148,163,184,0.16)'} } },
-            plugins: { legend: { position:'bottom', labels: {color:'#E2E8F0'} } } 
-        }
-    });
-
-    // 4. CHART 2: PARETO REJECT
-    const rejectKeys = ['uneven', 'mottled', 'startup', 'short', 'flow', 'flashing', 'crack', 'spot', 'scratch', 'dirty'];
-    const rejectCounts = {}; rejectKeys.forEach(k => rejectCounts[k] = 0);
-    
-    dataDash.forEach(r => {
-        rejectCounts['uneven'] += (+r.reject_uneven || 0); rejectCounts['mottled'] += (+r.reject_mottled || 0);
-        rejectCounts['startup'] += (+r.reject_startup || 0); rejectCounts['short'] += (+r.reject_short || 0);
-        rejectCounts['flow'] += (+r.reject_flow || 0); rejectCounts['flashing'] += (+r.reject_flashing || 0);
-        rejectCounts['crack'] += (+r.reject_crack || 0); rejectCounts['spot'] += (+r.reject_spot || 0);
-        rejectCounts['scratch'] += (+r.reject_scratch || 0); rejectCounts['dirty'] += (+r.reject_dirty || 0);
-    });
-
-    const sortedPareto = OperationalDashboard.pareto(rejectCounts);
-    
-    const ctxPareto = document.getElementById('chartPareto').getContext('2d');
-    if(chartParetoInstance) chartParetoInstance.destroy();
-    
-    chartParetoInstance = new Chart(ctxPareto, {
-        data: {
-            labels: sortedPareto.map(x => x.label.toUpperCase()),
-            datasets: [{ type:'bar', label:'Total Defect', data:sortedPareto.map(x => x.value), backgroundColor:'#818CF8', borderRadius:4, yAxisID:'y' }, { type:'line', label:'Kumulatif %', data:sortedPareto.map(x => x.cumulativePct), borderColor:'#FBBF24', pointBackgroundColor:'#FBBF24', yAxisID:'pct' }]
-        },
-        options: { 
-            responsive: true, 
-            maintainAspectRatio: false, 
-            plugins: { legend: { position:'bottom', labels:{color:'#E2E8F0'} }, annotation: {} },
-            scales: { x: { ticks:{color:'#E2E8F0'} }, y:{beginAtZero:true,ticks:{color:'#94A3B8'}}, pct:{position:'right',min:0,max:100,ticks:{color:'#FBBF24',callback:value=>value+'%'},grid:{drawOnChartArea:false}} }
-        }
-    });
-
-    renderDowntimeAndRanking(dataDash);
-    
-
-    // 5. TARGET CONTROL DETAIL TABLE
-    const targetDetailBody = document.querySelector('#tblTargetDetail tbody');
-    if(targetDetailBody && typeof extractLogTarget === 'function') {
-        const rows = targetRows
-            .sort((a,b) => a.tg.gapActual - b.tg.gapActual)
-            .slice(0, 80);
-        targetDetailBody.innerHTML = rows.map(x => {
-            const r = x.raw;
-            const tg = x.tg;
-            const meta = (typeof statusMeta === 'function') ? statusMeta(tg.status) : { label: tg.gapActual < 0 ? 'Tidak Target' : 'Aman', cls: tg.gapActual < 0 ? 'bad' : 'ok', icon: tg.gapActual < 0 ? '🔴' : '✅' };
-            const notes = [];
-            if(tg.effectiveHours < tg.standardShiftHours) notes.push(`Jam ${tg.effectiveHours}/${tg.standardShiftHours}: ${r.planned_stop_reason || 'stop terencana'}`);
-            if(tg.cavityActive < tg.cavityStd) notes.push(`Cav ${tg.cavityStd}→${tg.cavityActive}: ${r.cavity_adjust_reason || 'cavity turun'}`);
-            if(r.under_target_reason) notes.push(`Target: ${r.under_target_reason}`);
-            if(!notes.length && r.catatan) notes.push(r.catatan);
-            return `
-                <tr>
-                    <td><span class="target-pill ${meta.cls}">${meta.icon} ${meta.label}</span></td>
-                    <td><b>${escapeHtml(r.line || '-')}</b></td>
-                    <td>${escapeHtml(r.shift || '-')}</td>
-                    <td><b>${escapeHtml(r.kode || '-')}</b><br><small>${escapeHtml(r.nama || '-')}</small></td>
-                    <td class="right">${tg.effectiveHours || '-'} jam</td>
-                    <td class="right">${dashFmtInt(tg.targetActual)}</td>
-                    <td class="right text-ok"><b>${dashFmtInt(tg.okpcs)}</b></td>
-                    <td class="right ${tg.gapActual < 0 ? 'text-danger' : 'text-ok'}"><b>${dashFmtSigned(tg.gapActual)}</b></td>
-                    <td class="right"><b>${dashFmtPct(tg.achActual)}</b></td>
-                    <td>${escapeHtml(notes.join(' | ') || '-')}</td>
-                </tr>
-            `;
-        }).join('');
-    }
-
-    // 6. DATA MAPPING (OK & Reject)
-    const prodMap = {};
-    dataDash.forEach(r => {
-        const k = r.kode + "|" + r.nama; 
-        if(!prodMap[k]) prodMap[k] = { kode: r.kode, nama: r.nama, ok:0, rej:0 };
-        prodMap[k].ok += (+r.okpcs); 
-        prodMap[k].rej += (+r.reject);
-    });
-
-    // 7. TABEL KIRI: TOP 5 PRODUK OK (Hijau)
-    const topProdsOk = Object.values(prodMap).sort((a,b) => b.ok - a.ok).slice(0, 5);
-    const tblBodyOk = document.querySelector('#tblTopProd tbody');
-    if(tblBodyOk) {
-        tblBodyOk.innerHTML = topProdsOk.map(x => `
-            <tr>
-                <td>
-                    <div style="font-weight:700; font-size:0.95rem; margin-bottom:2px; color:var(--gold); font-family:'JetBrains Mono', monospace;">${escapeHtml(x.kode)}</div>
-                    <div style="font-size:0.8rem; color:#E2E8F0;">${escapeHtml(x.nama)}</div>
-                </td>
-                <td class="right text-ok" style="font-weight:bold; font-size:1.1rem; vertical-align:middle;">${x.ok.toLocaleString()}</td>
-            </tr>
-        `).join('');
-    }
-
-    // 8. TABEL KANAN: TOP 5 PRODUK REJECT (Merah)
-    const topProdsReject = Object.values(prodMap).sort((a,b) => b.rej - a.rej).slice(0, 5);
-    const tblBodyReject = document.querySelector('#tblTopReject tbody');
-    if(tblBodyReject) {
-        tblBodyReject.innerHTML = topProdsReject.map(x => `
-            <tr>
-                <td>
-                    <div style="font-weight:700; font-size:0.95rem; margin-bottom:2px; color:#E2E8F0; font-family:'JetBrains Mono', monospace;">${escapeHtml(x.kode)}</div>
-                    <div style="font-size:0.8rem; color:var(--text-muted);">${escapeHtml(x.nama)}</div>
-                </td>
-                <td class="right text-danger" style="font-weight:bold; font-size:1.1rem; vertical-align:middle;">${x.rej.toLocaleString()}</td>
-            </tr>
-        `).join('');
-    }
+    return;
 }
 
-function renderDowntimeAndRanking(data) {
-    const downtimeCounts = {};
-    data.forEach(row => { const reason = row.planned_stop_reason || 'Tanpa alasan'; const hours = +row.planned_stop_hours || 0; if(hours > 0) downtimeCounts[reason] = (downtimeCounts[reason] || 0) + hours; });
-    const downtime = OperationalDashboard.pareto(downtimeCounts);
-    const canvas = document.getElementById('chartDowntime');
-    if(chartDowntimeInstance) chartDowntimeInstance.destroy();
-    chartDowntimeInstance = new Chart(canvas.getContext('2d'), { type:'bar', data:{ labels:downtime.map(x=>x.label), datasets:[{label:'Jam stop',data:downtime.map(x=>x.value),backgroundColor:'#F59E0B',borderRadius:4}] }, options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{beginAtZero:true,ticks:{color:'#94A3B8'}},y:{ticks:{color:'#E2E8F0'}}}} });
-
-    const ranking = OperationalDashboard.lineRanking(data, row => { const target = extractLogTarget(row); return {...target, unsafe:isTargetUnsafe(target.status)}; });
-    const body = document.querySelector('#tblLineRanking tbody');
-    body.innerHTML = ranking.map((line,index) => `<tr class="dash-drill-row" data-line="${escapeHtml(line.line)}"><td>${index+1}</td><td><b>${escapeHtml(line.line)}</b></td><td class="right">${dashFmtPct(line.achievement)}</td><td class="right">${dashFmtPct(line.yieldPct)}</td><td class="right ${line.gap<0?'text-danger':'text-ok'}">${dashFmtSigned(line.gap)}</td></tr>`).join('') || '<tr><td colspan="5">Belum ada data.</td></tr>';
-    body.querySelectorAll('[data-line]').forEach(row => row.onclick = () => { document.getElementById('fLine').value = row.dataset.line; document.getElementById('fFrom').value = document.getElementById('dFrom').value; document.getElementById('fTo').value = document.getElementById('dTo').value; openWorkspace('reports'); renderTable(); });
+function renderGlobalOperationalSnapshot(data, start, end, shift) {
+    const targetOf = row => {
+        const target = typeof extractLogTarget === 'function' ? extractLogTarget(row) : {};
+        return { ...target, unsafe: typeof isTargetUnsafe === 'function' ? isTargetUnsafe(target.status) : (+target.gapActual || 0) < 0 };
+    };
+    const snapshot = OperationalDashboard.buildSnapshot(data, targetOf);
+    const periodBadge = document.getElementById('opsPeriodBadge');
+    if(periodBadge) periodBadge.textContent = `${start} — ${end}${shift ? ` · Shift ${shift}` : ''}`;
+    const grid = document.getElementById('opsLineGrid');
+    if(grid) grid.innerHTML = snapshot.length ? snapshot.map(line => {
+        const state = line.unsafe ? 'critical' : line.achievement < 97 ? 'watch' : 'safe';
+        const label = state === 'critical' ? 'Tindak lanjut' : state === 'watch' ? 'Pantau' : 'Aman';
+        return `<article class="ops-line-card ${state}"><div class="ops-line-head"><strong>${escapeHtml(line.line)}</strong><span>${label}</span></div><div class="ops-line-ach">${dashFmtPct(line.achievement)}</div><small>Pencapaian target aktual</small><div class="ops-line-metrics"><span><b>${dashFmtSigned(line.gap)}</b> Gap</span><span><b>${dashFmtInt(line.reject)}</b> Reject</span><span><b>${dashFmtPct(line.yieldPct)}</b> Yield</span></div><div class="ops-line-reason" title="Penyebab dominan">${escapeHtml(line.topReason)}</div></article>`;
+    }).join('') : '<div class="ops-empty">Tidak ada snapshot line untuk filter ini.</div>';
+    const queue = document.getElementById('opsActionQueue');
+    const critical = snapshot.filter(line => line.unsafe || line.gap < 0).slice(0, 6);
+    if(queue) queue.innerHTML = critical.length ? critical.map((line, index) => `<div class="ops-action-item"><span>${index + 1}</span><div><b>${escapeHtml(line.line)} · Gap ${dashFmtSigned(line.gap)}</b><small>${escapeHtml(line.topReason)} · loss ${dashFmtInt(line.loss)} pcs</small></div></div>`).join('') : '<div class="ops-empty compact">Tidak ada data kritis.</div>';
+    const reasonList = document.getElementById('opsReasonList');
+    const reasons = OperationalDashboard.reasonSummary(data).slice(0, 5);
+    const max = reasons[0]?.count || 1;
+    if(reasonList) reasonList.innerHTML = reasons.length ? reasons.map(item => `<div class="ops-reason-item"><div><span>${escapeHtml(item.reason)}</span><b>${item.count}</b></div><i style="--reason-width:${item.count / max * 100}%"></i></div>`).join('') : '<div class="ops-empty compact">Belum ada alasan tercatat.</div>';
 }
 
 function renderOperationalSnapshot(data, start, end, shift, mode = 'line') {
@@ -282,10 +273,32 @@ function renderOperationalSnapshot(data, start, end, shift, mode = 'line') {
     const snapshot = mode === 'line'
         ? OperationalDashboard.buildProductBreakdown(data, targetOf)
         : OperationalDashboard.buildSnapshot(data, targetOf);
-    const periodBadge = document.getElementById('opsPeriodBadge');
+    const periodBadge = document.getElementById('dashFocusPeriodBadge');
     if(periodBadge) periodBadge.textContent = `${start} — ${end}${shift ? ` · Shift ${shift}` : ''}`;
 
-    const grid = document.getElementById('opsLineGrid');
+    const totals = data.reduce((summary, row) => {
+        const target = targetOf(row);
+        summary.production += +row.hasil || 0;
+        summary.ok += +row.okpcs || 0;
+        summary.reject += +row.reject || +row.rejectpcs || 0;
+        summary.target += +target.targetActual || 0;
+        summary.gap += +target.gapActual || 0;
+        summary.loss += +target.capacityLossTotal || 0;
+        return summary;
+    }, { production:0, ok:0, reject:0, target:0, gap:0, loss:0 });
+    const achievement = totals.target > 0 ? totals.ok / totals.target * 100 : 0;
+    const yieldPct = totals.ok + totals.reject > 0 ? totals.ok / (totals.ok + totals.reject) * 100 : 0;
+    const meta = document.getElementById('dashFocusResultMeta');
+    if(meta) meta.textContent = `${dashFmtInt(data.length)} laporan · Produksi ${dashFmtInt(totals.production)} pcs · OK ${dashFmtInt(totals.ok)} pcs${totals.loss ? ` · Loss capacity ${dashFmtInt(totals.loss)} pcs` : ''}`;
+    const summary = document.getElementById('dashFocusSummary');
+    if(summary) summary.innerHTML = [
+        ['Achievement', dashFmtPct(achievement), 'target aktual'],
+        ['Gap target', dashFmtSigned(totals.gap), 'pcs'],
+        ['Reject', dashFmtInt(totals.reject), 'pcs'],
+        ['Yield', dashFmtPct(yieldPct), 'OK / output']
+    ].map(([label, value, hint]) => `<article class="dash-focus-kpi"><span>${label}</span><strong>${value}</strong><small>${hint}</small></article>`).join('');
+
+    const grid = document.getElementById('dashFocusGrid');
     if(grid) grid.innerHTML = snapshot.length ? snapshot.map(line => {
         const state = line.unsafe ? 'critical' : line.achievement < 97 ? 'watch' : 'safe';
         const label = state === 'critical' ? 'Tindak lanjut' : state === 'watch' ? 'Pantau' : 'Aman';
@@ -297,11 +310,11 @@ function renderOperationalSnapshot(data, start, end, shift, mode = 'line') {
         </article>`;
     }).join('') : '<div class="ops-empty">Tidak ada snapshot line untuk filter ini.</div>';
 
-    const queue = document.getElementById('opsActionQueue');
+    const queue = document.getElementById('dashFocusActionQueue');
     const critical = snapshot.filter(line => line.unsafe || line.gap < 0).slice(0, 6);
     if(queue) queue.innerHTML = critical.length ? critical.map((line, index) => `<div class="ops-action-item"><span>${index + 1}</span><div><b>${escapeHtml(line.label || line.line)} · Gap ${dashFmtSigned(line.gap)}</b><small>${escapeHtml(line.topReason)} · loss ${dashFmtInt(line.loss)} pcs</small></div></div>`).join('') : '<div class="ops-empty compact">Tidak ada data kritis.</div>';
 
-    const reasonList = document.getElementById('opsReasonList');
+    const reasonList = document.getElementById('dashFocusReasonList');
     const reasons = OperationalDashboard.reasonSummary(data).slice(0, 5);
     const max = reasons[0]?.count || 1;
     if(reasonList) reasonList.innerHTML = reasons.length ? reasons.map(item => `<div class="ops-reason-item"><div><span>${escapeHtml(item.reason)}</span><b>${item.count}</b></div><i style="--reason-width:${item.count / max * 100}%"></i></div>`).join('') : '<div class="ops-empty compact">Belum ada alasan tercatat.</div>';
