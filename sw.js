@@ -1,5 +1,5 @@
-const CACHE = 'input-produksi-v5.2';
-const SHELL = ['./', './index.html', './style.css', './styles/modern-shell.css', './production-core.js', './operational-dashboard.js', './governance-core.js', './app.js', './dashboard.js', './governance.js', './manifest.webmanifest'];
+const CACHE = 'input-produksi-v6.2';
+const SHELL = ['./', './index.html', './style.css', './styles/modern-shell.css', './production-core.js', './operational-dashboard.js', './governance-core.js', './app.js', './dashboard.js', './governance.js', './production-plan.js', './manifest.webmanifest'];
 
 self.addEventListener('install', event => event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)).then(() => self.skipWaiting())));
 self.addEventListener('activate', event => event.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(key => key !== CACHE).map(key => caches.delete(key)))).then(() => self.clients.claim())));

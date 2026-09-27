@@ -64,13 +64,14 @@ const WORKSPACE_ROUTES = {
     monitoring: 'pDashboard',
     reports: 'vLaporan',
     recap: 'mRekap',
+    plans: 'mProductionPlan',
     products: 'mMaster',
     governance: 'mGovernance'
 };
 let adminWorkspaceGranted = false;
 
 function setActiveNavigation(route) {
-    const desktopMap = { input:'btnAdd', monitoring:'btnDashboard', reports:'btnOpenLog', recap:'btnRekap', products:'btnMaster', governance:'btnGovernance' };
+    const desktopMap = { input:'btnAdd', monitoring:'btnDashboard', reports:'btnOpenLog', recap:'btnRekap', plans:'btnProductionPlan', products:'btnMaster', governance:'btnGovernance' };
     document.querySelectorAll('.side-nav-item').forEach(item => item.classList.remove('active'));
     if($(desktopMap[route])) $(desktopMap[route]).classList.add('active');
     document.querySelectorAll('[data-mobile-route]').forEach(item => item.classList.toggle('active', item.dataset.mobileRoute === route));
@@ -99,7 +100,7 @@ function installWorkspaceShell() {
     if(main && !$('workspaceDate')) {
         main.insertAdjacentHTML('afterbegin', '<header class="workspace-topbar"><div><span class="workspace-kicker">OPERATIONS WORKSPACE</span><h1>Production overview</h1></div><div class="workspace-topbar-actions"><span id="workspaceDate" class="workspace-date"></span><button id="btnOpenInputFromTop" class="btn primary sm" type="button">+ Laporan shift</button></div></header>');
     }
-    const routes = { vLaporan:'reports', pDashboard:'monitoring', mRekap:'recap', mMaster:'products', mEntry:'input', mGovernance:'governance' };
+    const routes = { vLaporan:'reports', pDashboard:'monitoring', mRekap:'recap', mProductionPlan:'plans', mMaster:'products', mEntry:'input', mGovernance:'governance' };
     Object.entries(routes).forEach(([id, route]) => {
         if(!$(id)) return;
         $(id).classList.add('workspace-view');
