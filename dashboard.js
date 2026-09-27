@@ -231,9 +231,8 @@ function renderDashboard() {
     }
     const dataDash = periodData.filter(row => dashboardFocusMode === 'line'
         ? String(row.line || '').toUpperCase() === focusValue.toUpperCase()
-        : (selectedProduct.code
-            ? normalizeDashboardProductCode(row.kode) === normalizeDashboardProductCode(selectedProduct.code)
-            : normalizeDashboardProductText(row.nama) === normalizeDashboardProductText(selectedProduct.name)));
+        : normalizeDashboardProductCode(row.kode) === normalizeDashboardProductCode(selectedProduct.code)
+            && normalizeDashboardProductText(row.nama) === normalizeDashboardProductText(selectedProduct.name));
     if(!dataDash.length) { showDashboardFocusEmpty('Tidak ada data untuk pilihan ini pada periode dan shift yang dipilih.'); return; }
     document.getElementById('dashFocusEmpty').hidden = true;
     document.getElementById('dashFocusedContent').hidden = false;
