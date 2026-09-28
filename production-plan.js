@@ -2,7 +2,10 @@
 let productionPlans = [];
 let productionPlanProgress = new Map();
 let productionPlanAdjustments = new Map();
+let productionPlanAssignments = new Map();
 let activeAdjustmentPlanId = '';
+let activeMachineMovePlanId = '';
+let activeCompletionPlanId = '';
 let planSelectedProduct = null;
 let planProductActiveIndex = -1;
 let planProductChoices = [];
@@ -18,6 +21,11 @@ const planDate = value => {
     return Number.isNaN(parsed.getTime()) ? '' : parsed.toISOString().slice(0, 10);
 };
 const planLine = value => planText(value);
+const planShiftOrder = value => {
+    const shift = Number(String(value ?? '').match(/\d+/)?.[0]);
+    return shift >= 1 && shift <= 3 ? shift : 1;
+};
+const planSlot = (date, shift) => `${planDate(date)}|${String(planShiftOrder(shift)).padStart(2, '0')}`;
 
 document.addEventListener('DOMContentLoaded', () => {
     $('btnProductionPlan').onclick = () => { openWorkspace('plans'); loadProductionPlans(); };
@@ -31,6 +39,10 @@ document.addEventListener('DOMContentLoaded', () => {
     installPlanProductAutocomplete();
     $('btnClosePlanAdjustments').onclick = closePlanAdjustments;
     $('btnSavePlanAdjustment').onclick = savePlanAdjustment;
+    $('btnClosePlanMachineMove').onclick = closePlanMachineMove;
+    $('btnSavePlanMachineMove').onclick = savePlanMachineMove;
+    $('btnClosePlanCompletion').onclick = closePlanCompletion;
+    $('btnSavePlanCompletion').onclick = savePlanCompletion;
 });
 
 async function loadProductionPlans() {
@@ -39,28 +51,34 @@ async function loadProductionPlans() {
     if(error) return showPlanMessage(`Gagal memuat plan: ${error.message}`);
     productionPlans = data || [];
     await loadProductionPlanAdjustments();
+    await loadProductionPlanAssignments();
     await loadProductionPlanProgress();
     renderProductionPlans();
 }
 
 async function loadProductionPlanProgress() {
     productionPlanProgress = new Map();
-    const activePlans = productionPlans.filter(plan => plan.status === 'ACTIVE' && plan.start_date && plan.line_code);
-    if(!activePlans.length || !client) return;
-    const earliestStart = activePlans.map(plan => planDate(plan.start_date)).filter(Boolean).sort()[0];
+    const trackedPlans = productionPlans.filter(plan => ['ACTIVE', 'COMPLETED'].includes(plan.status) && plan.start_date);
+    if(!trackedPlans.length || !client) return;
+    const earliestStart = trackedPlans.map(plan => planDate(plan.start_date)).filter(Boolean).sort()[0];
     if(!earliestStart) return;
     const rows = [];
     const pageSize = 1000;
     for(let from = 0; ; from += pageSize) {
-        const { data, error } = await client.from('logs').select('tanggal,line,kode,nama,okpcs').gte('tanggal', earliestStart).order('tanggal', { ascending:true }).range(from, from + pageSize - 1);
+        const { data, error } = await client.from('logs').select('tanggal,shift,line,kode,nama,okpcs').gte('tanggal', earliestStart).order('tanggal', { ascending:true }).range(from, from + pageSize - 1);
         if(error) { console.error('Gagal memuat progress Production Plan:', error); return; }
         rows.push(...(data || []));
         if(!data || data.length < pageSize) break;
     }
-    activePlans.forEach(plan => {
+    trackedPlans.forEach(plan => {
+        const assignments = getPlanAssignments(plan);
+        const completedBoundary = plan.status === 'COMPLETED' && plan.completed_date ? planSlot(plan.completed_date, plan.completed_shift) : '';
         const producedOk = rows.reduce((sum, row) => {
-            const match = planDate(row.tanggal) >= planDate(plan.start_date)
-                && planLine(row.line) === planLine(plan.line_code)
+            const rowSlot = planSlot(row.tanggal, row.shift);
+            const assignment = [...assignments].reverse().find(item => planSlot(item.effective_date, item.effective_shift) <= rowSlot);
+            const match = rowSlot >= planSlot(plan.start_date, 1)
+                && (!completedBoundary || rowSlot <= completedBoundary)
+                && assignment && planNorm(row.line) === planNorm(assignment.line_code)
                 && planNorm(row.kode) === planNorm(plan.product_code_snapshot)
                 && planNorm(row.nama) === planNorm(plan.product_name_snapshot);
             return match ? sum + (Number(row.okpcs) || 0) : sum;
@@ -72,6 +90,23 @@ async function loadProductionPlanProgress() {
         const overQty = Math.max(netGood - quantity, 0);
         productionPlanProgress.set(plan.id, { producedOk, adjustmentTotal, netGood, remaining, overQty, progressPct: quantity > 0 ? netGood / quantity * 100 : 0 });
     });
+}
+
+async function loadProductionPlanAssignments() {
+    productionPlanAssignments = new Map();
+    if(!client) return;
+    const { data, error } = await client.from('production_plan_machine_assignments').select('*').order('effective_date', { ascending:true }).order('effective_shift', { ascending:true }).order('created_at', { ascending:true });
+    if(error) { console.error('Gagal memuat riwayat mesin Production Plan:', error); return; }
+    (data || []).forEach(assignment => {
+        if(!productionPlanAssignments.has(assignment.plan_id)) productionPlanAssignments.set(assignment.plan_id, []);
+        productionPlanAssignments.get(assignment.plan_id).push(assignment);
+    });
+}
+
+function getPlanAssignments(plan) {
+    const stored = productionPlanAssignments.get(plan.id) || [];
+    const fallback = plan.line_code ? [{ plan_id:plan.id, line_code:plan.line_code, effective_date:planDate(plan.start_date), effective_shift:1, legacy:true }] : [];
+    return (stored.length ? stored : fallback).slice().sort((a, b) => planSlot(a.effective_date, a.effective_shift).localeCompare(planSlot(b.effective_date, b.effective_shift)));
 }
 
 async function loadProductionPlanAdjustments() {
@@ -103,10 +138,13 @@ function renderProductionPlans() {
         const statusClass = String(plan.status || 'ACTIVE').toLowerCase();
         const due = plan.due_date || '-';
         const progress = productionPlanProgress.get(plan.id);
+        const assignments = getPlanAssignments(plan);
+        const machineHistory = assignments.map(item => planLine(item.line_code)).filter(Boolean);
+        const currentMachine = machineHistory[machineHistory.length - 1] || plan.line_code || '-';
         const progressMarkup = progress ? `<div class="plan-progress"><div class="plan-progress-top"><b>${progress.progressPct.toFixed(1)}%</b><span>${progress.overQty ? `Over +${planFmt(progress.overQty)} pcs` : `Remaining ${planFmt(progress.remaining)} pcs`}</span></div><div class="plan-progress-track"><i style="width:${Math.min(progress.progressPct, 100)}%"></i></div></div>` : '<span class="muted">-</span>';
-        const secondaryActions = [`<option value="">Aksi lain</option>`, `<option value="edit">Edit</option>`, plan.status === 'ACTIVE' ? `<option value="complete">Selesai</option><option value="cancel">Batal</option>` : '', `<option value="delete">Hapus</option>`].join('');
+        const secondaryActions = [`<option value="">Aksi lain</option>`, `<option value="edit">Edit</option>`, plan.status === 'ACTIVE' ? `<option value="move">Pindah Mesin</option><option value="complete">Selesai</option><option value="cancel">Batal</option>` : '', `<option value="delete">Hapus</option>`].join('');
         const actionButtons = `<button class="btn sm" type="button" data-plan-adjust="${escapeHtml(plan.id)}">Penyesuaian</button><select class="input plan-action-select" data-plan-more="${escapeHtml(plan.id)}" aria-label="Aksi plan">${secondaryActions}</select>`;
-        return `<tr><td><b>${escapeHtml(plan.product_code_snapshot || '-')}</b><br><small class="plan-product-name" title="${escapeHtml(plan.product_name_snapshot || '-')}">${escapeHtml(plan.product_name_snapshot || '-')}</small></td><td>${escapeHtml(plan.line_code || '-')}</td><td class="right"><b>${planFmt(plan.plan_qty)}</b></td><td class="right">${progress ? `<b>${planFmt(progress.producedOk)}</b>` : '-'}</td><td class="right ${progress?.adjustmentTotal < 0 ? 'text-danger' : 'text-ok'}">${progress ? `${progress.adjustmentTotal > 0 ? '+' : ''}${planFmt(progress.adjustmentTotal)}` : '-'}</td><td class="right">${progress ? `<b>${planFmt(progress.netGood)}</b>` : '-'}</td><td class="right">${progress ? planFmt(progress.remaining) : '-'}</td><td class="plan-progress-cell">${progressMarkup}</td><td>${escapeHtml(plan.start_date || '-')}</td><td>${escapeHtml(due)}</td><td><span class="plan-status ${statusClass}">${escapeHtml(plan.status || 'ACTIVE')}</span></td><td class="plan-note-cell">${escapeHtml(plan.note || '-')}</td><td class="right plan-actions">${actionButtons}</td></tr>`;
+        return `<tr><td><b>${escapeHtml(plan.product_code_snapshot || '-')}</b><br><small class="plan-product-name" title="${escapeHtml(plan.product_name_snapshot || '-')}">${escapeHtml(plan.product_name_snapshot || '-')}</small></td><td><b>${escapeHtml(currentMachine)}</b><br><small class="plan-machine-history" title="${escapeHtml(machineHistory.join(' → '))}">Riwayat: ${escapeHtml(machineHistory.join(' → ') || '-')}</small></td><td class="right"><b>${planFmt(plan.plan_qty)}</b></td><td class="right">${progress ? `<b>${planFmt(progress.producedOk)}</b>` : '-'}</td><td class="right ${progress?.adjustmentTotal < 0 ? 'text-danger' : 'text-ok'}">${progress ? `${progress.adjustmentTotal > 0 ? '+' : ''}${planFmt(progress.adjustmentTotal)}` : '-'}</td><td class="right">${progress ? `<b>${planFmt(progress.netGood)}</b>` : '-'}</td><td class="right">${progress ? planFmt(progress.remaining) : '-'}</td><td class="plan-progress-cell">${progressMarkup}</td><td>${escapeHtml(plan.start_date || '-')}</td><td>${escapeHtml(due)}</td><td><span class="plan-status ${statusClass}">${escapeHtml(plan.status || 'ACTIVE')}</span></td><td class="plan-note-cell">${escapeHtml(plan.note || '-')}</td><td class="right plan-actions">${actionButtons}</td></tr>`;
     }).join('');
     document.querySelectorAll('[data-plan-edit]').forEach(button => button.onclick = () => openProductionPlanForm(button.dataset.planEdit));
     document.querySelectorAll('[data-plan-adjust]').forEach(button => button.onclick = () => openPlanAdjustments(button.dataset.planAdjust));
@@ -117,7 +155,8 @@ function renderProductionPlans() {
         const planId = select.dataset.planMore;
         select.value = '';
         if (action === 'edit') openProductionPlanForm(planId);
-        if (action === 'complete') setProductionPlanStatus(planId, 'COMPLETED');
+        if (action === 'move') openPlanMachineMove(planId);
+        if (action === 'complete') openPlanCompletion(planId);
         if (action === 'cancel') setProductionPlanStatus(planId, 'CANCELLED');
         if (action === 'delete') deleteProductionPlan(planId);
     });
@@ -404,7 +443,87 @@ async function saveProductionPlan() {
     };
     const { error } = await client.from('production_plans').upsert(payload);
     if(error) return alert(`Gagal menyimpan plan: ${error.message}`);
+    if(!current) {
+        const assignment = { id:uid(), plan_id:id, line_code:payload.line_code, effective_date:payload.start_date, effective_shift:planShiftOrder(planSelectedProduct.shifts?.[0]) };
+        const { error: assignmentError } = await client.from('production_plan_machine_assignments').insert(assignment);
+        if(assignmentError) return alert(`Plan tersimpan, tetapi riwayat mesin awal gagal dibuat: ${assignmentError.message}`);
+    }
     closeProductionPlanForm();
+    await loadProductionPlans();
+}
+
+async function loadAssignmentLines(selected = '') {
+    const select = $('planMoveLine');
+    select.disabled = true;
+    select.innerHTML = '<option value="">Memuat mesin...</option>';
+    const { data, error } = await client.from('logs').select('line');
+    if(error) { select.innerHTML = '<option value="">Gagal memuat mesin</option>'; return; }
+    const lines = [...new Set((data || []).map(row => planLine(row.line)).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'id', { numeric:true }));
+    select.innerHTML = '<option value="">Pilih mesin...</option>' + lines.map(line => `<option value="${escapeHtml(line)}">${escapeHtml(line)}</option>`).join('');
+    select.value = selected;
+    select.disabled = false;
+}
+
+async function openPlanMachineMove(planId) {
+    const plan = productionPlans.find(item => item.id === planId);
+    if(!plan) return;
+    activeMachineMovePlanId = planId;
+    $('planMoveProduct').textContent = `${plan.product_code_snapshot} — ${plan.product_name_snapshot}`;
+    $('planMoveEffectiveDate').value = todayISO();
+    $('planMoveEffectiveDate').min = planDate(plan.start_date);
+    $('planMoveEffectiveShift').value = '1';
+    $('mPlanMachineMove').classList.add('open');
+    await loadAssignmentLines('');
+}
+
+function closePlanMachineMove() {
+    $('mPlanMachineMove').classList.remove('open');
+    activeMachineMovePlanId = '';
+}
+
+async function savePlanMachineMove() {
+    const plan = productionPlans.find(item => item.id === activeMachineMovePlanId);
+    if(!plan || !client) return;
+    const line = planLine($('planMoveLine').value);
+    const effectiveDate = planDate($('planMoveEffectiveDate').value);
+    const effectiveShift = planShiftOrder($('planMoveEffectiveShift').value);
+    if(!line) return alert('Pilih mesin baru.');
+    if(!effectiveDate || effectiveDate < planDate(plan.start_date)) return alert('Tanggal berlaku tidak boleh sebelum tanggal mulai plan.');
+    if(getPlanAssignments(plan).some(item => planSlot(item.effective_date, item.effective_shift) === planSlot(effectiveDate, effectiveShift))) return alert('Sudah ada riwayat mesin pada tanggal dan shift tersebut. Pilih slot berlaku yang lain.');
+    const payload = { id:uid(), plan_id:plan.id, line_code:line, effective_date:effectiveDate, effective_shift:effectiveShift };
+    const { error } = await client.from('production_plan_machine_assignments').insert(payload);
+    if(error) return alert(`Gagal menyimpan perpindahan mesin: ${error.message}`);
+    const { error: planError } = await client.from('production_plans').update({ line_code:line }).eq('id', plan.id);
+    if(planError) return alert(`Riwayat mesin tersimpan, tetapi mesin aktif gagal diperbarui: ${planError.message}`);
+    closePlanMachineMove();
+    await loadProductionPlans();
+}
+
+function openPlanCompletion(planId) {
+    const plan = productionPlans.find(item => item.id === planId);
+    if(!plan) return;
+    activeCompletionPlanId = planId;
+    $('planCompletionProduct').textContent = `${plan.product_code_snapshot} — ${plan.product_name_snapshot}`;
+    $('planCompletionDate').value = todayISO();
+    $('planCompletionDate').min = planDate(plan.start_date);
+    $('planCompletionShift').value = '3';
+    $('mPlanCompletion').classList.add('open');
+}
+
+function closePlanCompletion() {
+    $('mPlanCompletion').classList.remove('open');
+    activeCompletionPlanId = '';
+}
+
+async function savePlanCompletion() {
+    const plan = productionPlans.find(item => item.id === activeCompletionPlanId);
+    if(!plan || !client) return;
+    const completedDate = planDate($('planCompletionDate').value);
+    const completedShift = planShiftOrder($('planCompletionShift').value);
+    if(!completedDate || completedDate < planDate(plan.start_date)) return alert('Tanggal selesai tidak boleh sebelum tanggal mulai plan.');
+    const { error } = await client.from('production_plans').update({ status:'COMPLETED', completed_date:completedDate, completed_shift:completedShift }).eq('id', plan.id);
+    if(error) return alert(`Gagal menyelesaikan plan: ${error.message}`);
+    closePlanCompletion();
     await loadProductionPlans();
 }
 
