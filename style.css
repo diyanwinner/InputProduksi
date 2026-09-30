@@ -3864,3 +3864,23 @@ body[data-route="home"] .workspace-topbar { display:none; }
         width: 100%;
     }
 }
+
+/* ═════════════════════════════════════════════════════════════
+   INPUT PRODUKSI - PRODUCT AUTOCOMPLETE OVERFLOW FIX
+   Dropdown produk boleh keluar dari accordion Produk saat terbuka.
+   Accordion lain tetap memakai overflow hidden.
+═════════════════════════════════════════════════════════════ */
+.entry-flow details.product-section.required-accordion[open] {
+    overflow: visible !important;
+    position: relative;
+    z-index: 40;
+}
+
+.product-section .product-search-box {
+    position: relative;
+    z-index: 50;
+}
+
+.product-section .search-list {
+    z-index: 9999;
+}
